@@ -1,0 +1,7 @@
+circuit, 𝜔𝑜 = 2𝜋 rad/sec, 𝜔𝑐 = 2𝜋 rad/sec. 
+ 
+If a periodic signal 𝑉𝑖𝑛(𝑡) is input to our first order filter, the output can be determined by 
+representing the input as a sum of sinusoids and then calling on the concept of superposition to 
+determine the output.  If the input is written as 
+𝑉𝑖𝑛(𝑡) = ∑ 𝑉𝑘𝑐𝑜𝑠(𝑘𝜔𝑜𝑡)∞
+𝑘=0 ,r v

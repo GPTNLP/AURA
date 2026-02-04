@@ -1,0 +1,14 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is Ohms law?"
+    },
+    {
+      "role": "assistant",
+      "content": "Ohm's Law describes a linear relationship between current and voltage in a resistor. It states that the voltage drop across a resistor is proportional to the current flowing through it, and can be represented by the equation V = I*R, where V is the voltage, I is the current, and R is the resistance."
+    }
+  ],
+  "timestamp": "2025-12-02T20:15:19.993137",
+  "session_id": "Testdemo"
+}

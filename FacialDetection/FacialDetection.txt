@@ -1,0 +1,3 @@
+A simplistic lightweight CV model capable of general image recognition for faces. This will be open ended in the event an inclusion for QOL features such as resistor values is wanted.
+
+Will be based on Meta's Segment Anything Model (SAM): https://github.com/facebookresearch/segment-anything
