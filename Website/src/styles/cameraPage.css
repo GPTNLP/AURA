@@ -1,145 +1,19 @@
-/* ============================================================
-   CAMERA FEED UI — TAMU Modern Engineering Style
-============================================================ */
-
-.camera-container {
-    display: flex;
-    flex-direction: column;
-    gap: 1.4rem;
+.camera-page {
+    padding: 24px;
 }
 
-.camera-title {
-    font-size: 1.6rem;
-    font-weight: 800;
-    color: var(--accent);
+.camera-card {
+    width: 100%;
+    max-width: 1600px; /* BIGGER */
+    margin: 0 auto;
 }
 
-/* STATUS BAR */
-.camera-status {
-    padding: 0.8rem;
-    border-radius: 10px;
-    font-weight: 700;
-    text-align: center;
-    color: white;
-}
-
-.camera-status.ok {
-    background: #009944;
-}
-.camera-status.bad {
-    background: #b30000;
-}
-
-/* CAMERA FRAME */
-.camera-box {
-    position: relative;
+.camera-feed {
+    width: 100%;
+    aspect-ratio: 16 / 9;
     background: #000;
-    height: 420px;
-    border-radius: 18px;
+    border-radius: 16px;
     overflow: hidden;
     border: 2px solid var(--accent);
     box-shadow: var(--shadow);
-}
-
-
-.camera-placeholder {
-    width: 100%;
-    height: 100%;
-    color: #888;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-/* OVERLAYS */
-.camera-overlay {
-    display: flex;
-    gap: 1rem;
-    margin-left: 0.3rem;
-}
-
-.overlay-item {
-    background: var(--card-bg);
-    padding: 0.45rem 0.9rem;
-    border-radius: 8px;
-    font-weight: 600;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--card-border);
-}
-
-/* CONTROL BUTTONS */
-.camera-controls {
-    display: flex;
-    gap: 1rem;
-    margin-top: 0.5rem;
-}
-
-.camera-btn {
-    flex: 1;
-    padding: 0.9rem;
-    border-radius: 10px;
-    font-weight: 700;
-    cursor: pointer;
-    border: none;
-    transition: 0.25s;
-    color: white;
-}
-
-/* Button Colors */
-.camera-btn.connect {
-    background: #009944;
-}
-.camera-btn.connect:hover {
-    background: #00b350;
-}
-
-.camera-btn.refresh {
-    background: var(--accent);
-}
-.camera-btn.refresh:hover {
-    background: var(--accent-light);
-}
-
-.camera-btn.disconnect {
-    background: #b30000;
-}
-.camera-btn.disconnect:hover {
-    background: #cc0000;
-}
-
-/* RESPONSIVE */
-@media (max-width: 900px) {
-    .camera-box {
-        height: 600px;
     }
-}
-
-.camera-page {
-  padding: 24px;
-}
-
-/* Camera card wrapper */
-.camera-card {
-  width: 100%;
-  max-width: 1400px; /* ⬅️ bigger than before */
-  margin: 0 auto;
-}
-
-/* Actual feed */
-.camera-feed {
-  width: 100%;
-  aspect-ratio: 16 / 9; /* keeps correct shape */
-  background: #000;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: var(--shadow);
-  border: 1px solid var(--card-border);
-}
-
-/* The <img> or <video> itself */
-.camera-feed img,
-.camera-feed video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}

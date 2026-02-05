@@ -1,43 +1,6 @@
-.camera-feed { width: 100%; }
-.camera-title { margin: 0 0 10px 0; }
-.camera-box {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: var(--card-radius);
-  border: 1px solid var(--card-border);
-  background: var(--bg);
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-}
 .camera-img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
-}
-.camera-error {
-  margin: 8px 0;
-  color: var(--status-bad);
-  font-size: 13px;
-}
-
-.camera-wrap {
-  width: 100%;
-  max-width: 1400px;
-}
-
-.camera-frame {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 16px;
-  border: 2px solid var(--accent);
-  background: #000;
-  overflow: hidden;
-}
-
-.camera-frame img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain; /* shows whole view */
+  object-fit: contain; /* show whole view */
   display: block;
 }

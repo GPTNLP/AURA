@@ -5,7 +5,7 @@ import base64
 import hmac
 import hashlib
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 
 import cv2
 from fastapi import FastAPI, Request, HTTPException
@@ -25,18 +25,23 @@ ALLOWED_IPS = {ip.strip() for ip in os.getenv("ALLOWED_IPS", "").split(",") if i
 # Camera security token (for camera endpoints)
 API_TOKEN = os.getenv("API_TOKEN", "")
 
-# Auth settings
+# Auth settings (optional / future)
 AUTH_SECRET = os.getenv("AUTH_SECRET", "")
-AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")  # temporary shared password
-AUTH_TOKEN_TTL = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "86400"))  # 24h default
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
+AUTH_TOKEN_TTL = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "86400"))
 AUTH_ALLOWED_DOMAINS = [d.strip().lower() for d in os.getenv("AUTH_ALLOWED_DOMAINS", "tamu.edu").split(",") if d.strip()]
 
 # Camera settings
 CAMERA_INDEX = os.getenv("CAMERA_INDEX", "0")
 CAMERA_FPS = int(os.getenv("CAMERA_FPS", "30"))
 CAMERA_JPEG_QUALITY = int(os.getenv("CAMERA_JPEG_QUALITY", "70"))
-CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "640"))
-CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "480"))
+CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "1280"))
+CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "720"))
+CAMERA_USE_DSHOW = os.getenv("CAMERA_USE_DSHOW", "1") == "1"  # Windows only
+
+# ---------------------------
+# Helpers
+# ---------------------------
 
 def get_client_ip(request: Request) -> str:
     return request.client.host
@@ -48,65 +53,19 @@ def require_ip_allowlist(request: Request):
     if ip not in ALLOWED_IPS:
         raise HTTPException(status_code=403, detail=f"IP not allowed: {ip}")
 
-def require_camera_bearer_token(request: Request):
+def require_camera_token(request: Request):
     if not API_TOKEN:
         raise HTTPException(status_code=500, detail="Server missing API_TOKEN")
+
     auth = request.headers.get("authorization", "")
-    if auth != f"Bearer {API_TOKEN}":
-        raise HTTPException(status_code=401, detail="Invalid token")
+    if auth == f"Bearer {API_TOKEN}":
+        return
 
-# ---------------------------
-# Auth token (HMAC-signed)
-# ---------------------------
+    token_q = request.query_params.get("token", "")
+    if token_q == API_TOKEN:
+        return
 
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
-
-def _b64url_decode(data: str) -> bytes:
-    pad = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + pad)
-
-def sign_token(payload: Dict[str, Any]) -> str:
-    if not AUTH_SECRET:
-        raise RuntimeError("AUTH_SECRET missing")
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    sig = hmac.new(AUTH_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
-    return f"{_b64url_encode(raw)}.{_b64url_encode(sig)}"
-
-def verify_token(token: str) -> Dict[str, Any]:
-    if not AUTH_SECRET:
-        raise HTTPException(status_code=500, detail="Server missing AUTH_SECRET")
-    try:
-        raw_b64, sig_b64 = token.split(".", 1)
-        raw = _b64url_decode(raw_b64)
-        sig = _b64url_decode(sig_b64)
-        expected = hmac.new(AUTH_SECRET.encode("utf-8"), raw, hashlib.sha256).digest()
-        if not hmac.compare_digest(sig, expected):
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        payload = json.loads(raw.decode("utf-8"))
-        exp = int(payload.get("exp", 0))
-        if exp and time.time() > exp:
-            raise HTTPException(status_code=401, detail="Token expired")
-        return payload
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-def require_auth(request: Request) -> Dict[str, Any]:
-    auth = request.headers.get("authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing auth token")
-    token = auth.replace("Bearer ", "", 1).strip()
-    return verify_token(token)
-
-def domain_allowed(email: str) -> bool:
-    email = (email or "").strip().lower()
-    if "@" not in email:
-        return False
-    domain = email.split("@", 1)[1]
-    return domain in AUTH_ALLOWED_DOMAINS
+    raise HTTPException(status_code=401, detail="Invalid token")
 
 # ---------------------------
 # Camera
@@ -117,8 +76,11 @@ def open_camera():
     if isinstance(src, str) and src.isdigit():
         src = int(src)
 
-    # Windows fix: DirectShow; on Jetson/Linux you can remove CAP_DSHOW
-    cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+    # On Windows, CAP_DSHOW helps a lot. On Jetson/Linux, just use cv2.VideoCapture(src).
+    if CAMERA_USE_DSHOW:
+        cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+    else:
+        cap = cv2.VideoCapture(src)
 
     if not cap.isOpened():
         raise RuntimeError(f"Could not open camera: {CAMERA_INDEX}")
@@ -127,8 +89,12 @@ def open_camera():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
 
-    time.sleep(0.2)
+    time.sleep(0.15)
     return cap
+
+# ---------------------------
+# FastAPI
+# ---------------------------
 
 app = FastAPI()
 
@@ -145,65 +111,27 @@ if ALLOWED_ORIGINS:
 def health():
     return {"ok": True}
 
-# ---------------------------
-# AUTH endpoints
-# ---------------------------
-
-@app.post("/auth/login")
-async def auth_login(request: Request):
-    require_ip_allowlist(request)
-
-    if not AUTH_PASSWORD or not AUTH_SECRET:
-        raise HTTPException(status_code=500, detail="Server missing AUTH_PASSWORD or AUTH_SECRET")
-
-    body = await request.json()
-    email = (body.get("email") or "").strip()
-    password = (body.get("password") or "").strip()
-
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Email + password required")
-
-    if password != AUTH_PASSWORD:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    if not domain_allowed(email):
-        raise HTTPException(status_code=403, detail="Email domain not allowed")
-
-    now = int(time.time())
-    payload = {
-        "sub": email,
-        "iat": now,
-        "exp": now + AUTH_TOKEN_TTL,
-    }
-    token = sign_token(payload)
-    return {"token": token, "user": {"email": email}, "expires_in": AUTH_TOKEN_TTL}
-
-@app.get("/auth/me")
-def auth_me(request: Request):
-    require_ip_allowlist(request)
-    payload = require_auth(request)
-    return {"user": {"email": payload.get("sub")}, "exp": payload.get("exp")}
-
-# ---------------------------
-# Camera endpoints (keep your token gate here)
-# ---------------------------
-
 @app.get("/camera/stream")
 def stream(request: Request):
     require_ip_allowlist(request)
-    require_camera_bearer_token(request)
+    require_camera_token(request)
 
     def gen():
         cap = open_camera()
         frame_delay = 1.0 / max(CAMERA_FPS, 1)
+
         try:
             while True:
                 ok, frame = cap.read()
-                if not ok:
+                if not ok or frame is None:
                     time.sleep(0.02)
                     continue
 
-                ok, jpg = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), CAMERA_JPEG_QUALITY])
+                ok, jpg = cv2.imencode(
+                    ".jpg",
+                    frame,
+                    [int(cv2.IMWRITE_JPEG_QUALITY), CAMERA_JPEG_QUALITY],
+                )
                 if not ok:
                     continue
 
@@ -211,6 +139,8 @@ def stream(request: Request):
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
                 )
+
+                # throttle
                 time.sleep(frame_delay)
         finally:
             cap.release()
