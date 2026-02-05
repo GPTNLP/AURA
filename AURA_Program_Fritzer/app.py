@@ -12,10 +12,10 @@ from langchain_ollama import ChatOllama
 
 # Pull funcs from local files
 from model import CheckModelAvailability
-from Fritzer_AI.database_bridge import InitializeDatabase
-from Fritzer_AI.llm import BuildChain
-from Fritzer_AI.lightrag import LightRAG
-from Fritzer_AI.config import DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL, DEFAULT_DOCS_PATH
+from database_bridge import InitializeDatabase
+from llm import BuildChain
+from lightrag import LightRAG
+from config import DEFAULT_EMBEDDING_MODEL, DEFAULT_MODEL, DEFAULT_DOCS_PATH
 
 
 def main(model_name: str, embedding_model: str, docs_path: str, reload: bool = False):

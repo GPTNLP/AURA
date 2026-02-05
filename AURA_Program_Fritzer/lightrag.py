@@ -12,7 +12,7 @@ generation, & overlap scoring for transparency.
 
 from typing import List, Dict, Any, Tuple
 from langchain_core.documents import Document
-from Fritzer_AI.config import LIGHTRAG_K, LIGHTRAG_PROMPT
+from config import LIGHTRAG_K, LIGHTRAG_PROMPT
 
 
 class LightRAG:

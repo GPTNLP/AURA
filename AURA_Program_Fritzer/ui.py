@@ -2,13 +2,10 @@
 Streamlit UI for lab assistant demo
 run using python -m streamlit run ui.py
 """
-from dotenv import load_dotenv
-load_dotenv(dotenv_path=".env", override=True)
 
 import streamlit as st
 import os
 from langchain_ollama import ChatOllama
-from langsmith import traceable
 
 from database_bridge import InitializeDatabase, SaveSession, ListSessions, LoadSession, ClearCudaCache, CombineDocuments
 from llm import GetSession, ClearSession
@@ -194,7 +191,6 @@ else:
     
     # Input
     if prompt := st.chat_input("Ask a question"):
-        @traceable(name="handle_user_message")
         def process_message(prompt, session_id, query_mode):
             return prompt, session_id, query_mode
         
@@ -227,12 +223,10 @@ else:
                         ("human", "{question}")
                     ])
                     
-                    @traceable(name="retrieve_documents")
                     def get_context(q):
                         docs = retriever.invoke(q)
                         return CombineDocuments(docs)
                     
-                    @traceable(name="rag_chain_run")
                     def run_rag_chain(chain_with_history, question, session_id):
                         response_text = ""
                         for chunk in chain_with_history.stream(
@@ -282,7 +276,6 @@ else:
                             st.session_state.db
                         )
                     
-                    @traceable(name="lightrag_generate")
                     def traced_lightrag(prompt):
                         return st.session_state.lightrag.generate(prompt)
 

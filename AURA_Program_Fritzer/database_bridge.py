@@ -28,7 +28,7 @@ from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import torch
 
-from Fritzer_AI.config import DEFAULT_DOC_PROMPT, CHUNK_SIZE, CHUNK_OVERLAP, CHROMA_DIR, STORAGE_DIR, SESSIONS_DIR
+from config import DEFAULT_DOC_PROMPT, CHUNK_SIZE, CHUNK_OVERLAP, CHROMA_DIR, STORAGE_DIR, SESSIONS_DIR
 
 SPLITTER = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
 
