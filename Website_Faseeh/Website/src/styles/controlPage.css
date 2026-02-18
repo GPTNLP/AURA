@@ -1,0 +1,156 @@
+/* src/styles/controlPage.css */
+
+.control-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.control-subtitle {
+  margin: 0;
+  opacity: 0.75;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .control-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.control-card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.control-card h2 {
+  margin: 0 0 12px 0;
+  font-size: 18px;
+}
+
+.control-divider {
+  height: 1px;
+  background: var(--card-border);
+  margin: 10px 0 16px;
+}
+
+/* D-pad wrapper: center it + give it a "panel" look */
+.dpad-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 6px;
+}
+
+.dpad {
+  display: grid;
+  grid-template-columns: 86px 118px 86px;
+  grid-template-rows: 86px 86px 86px;
+  gap: 10px;
+  align-items: center;
+  justify-items: center;
+}
+
+/* Base button style */
+.dpad-btn,
+.stop-btn {
+  border-radius: 14px;
+  height: 86px;
+  width: 86px;
+  border: 1px solid var(--card-border);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: 0.15s ease;
+  display: grid;
+  place-items: center;
+  user-select: none;
+}
+
+.dpad-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+  border-color: var(--accent);
+}
+
+.dpad-btn:active {
+  transform: translateY(0px);
+}
+
+/* Make arrows look better */
+.dpad-btn span {
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+/* STOP ALL: bigger + centered */
+.stop-btn {
+  grid-column: 2;
+  grid-row: 2;
+  width: 118px;
+  height: 86px;
+  border: none;
+  background: #8b0000;
+  color: white;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+}
+
+.stop-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+  opacity: 0.95;
+}
+
+.stop-btn:active {
+  transform: translateY(0px);
+}
+
+.up    { grid-column: 2; grid-row: 1; }
+.left  { grid-column: 1; grid-row: 2; }
+.right { grid-column: 3; grid-row: 2; }
+.down  { grid-column: 2; grid-row: 3; }
+
+.control-hint {
+  margin-top: 10px;
+  font-size: 13px;
+  opacity: 0.7;
+  text-align: center;
+}
+
+/* Actions list */
+.actions-list {
+  display: grid;
+  gap: 10px;
+}
+
+.action-btn {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: 0.15s ease;
+  text-align: left;
+  font-weight: 600;
+}
+
+.action-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-hover);
+  border-color: var(--accent);
+}

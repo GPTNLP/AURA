@@ -1,0 +1,43 @@
+.navbar {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  background: var(--navbar-bg);
+  color: var(--navbar-text);
+  border-bottom: 1px solid #00000014;
+}
+
+.navbar-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--navbar-text);
+}
+
+.navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.navbar-user {
+  font-size: 14px;
+  color: var(--navbar-text);
+  opacity: 0.85;
+}
+
+.navbar-logout {
+  border: none;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.navbar-logout:hover {
+  opacity: 0.9;
+}

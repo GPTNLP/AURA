@@ -1,0 +1,19 @@
+.camera-page {
+    padding: 24px;
+}
+
+.camera-card {
+    width: 100%;
+    max-width: 1600px; /* BIGGER */
+    margin: 0 auto;
+}
+
+.camera-feed {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow);
+    }

@@ -1,0 +1,20 @@
+{
+  "updatedAt": "2026-02-04T00:00:00Z",
+  "robot": {
+    "name": "ARUA",
+    "status": "ONLINE",
+    "uptimeSec": 12840
+  },
+  "system": {
+    "batteryPct": 92,
+    "cpuTempC": 47.8,
+    "ramPct": 36.5,
+    "wifiDbm": -58,
+    "weightLb": 7.3
+  },
+  "health": {
+    "motors": "OK",
+    "sensors": "OK",
+    "thermals": "WARN"
+  }
+}

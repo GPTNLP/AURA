@@ -1,0 +1,151 @@
+/* src/styles/layout.css */
+
+html, body, #root {
+  height: 100%;
+}
+
+.layout-wrapper {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.layout-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.layout-main {
+  flex: 1;
+  padding: 24px;
+  min-width: 0;
+}
+
+
+
+
+
+/* ============================================================
+   GLOBAL DEFAULT THEME VARIABLES
+============================================================ */
+:root {
+    --bg: #f4f4f4;
+    --text: #111;
+    --card-bg: #ffffff;
+
+    --navbar-bg: #ececec;
+    --navbar-text: #111;
+
+    --sidebar-bg: #2a2a2a;
+    --sidebar-text: #ffffff;
+    --sidebar-hover: #3a3a3a;
+    --sidebar-active: #555555;
+
+    --accent: #0066ff;
+
+    /* ARUA robot profile panel */
+    --arua-panel-bg: #ffffff;
+    --arua-panel-text: #000000;
+
+    /* Status Card danger levels */
+    --status-good: #2ecc71;
+    --status-warn: #f1c40f;
+    --status-bad: #e74c3c;
+}
+
+/* ============================================================
+   TAMU THEME (MAROON SIDEBAR + BLACK ARUA PANEL)
+============================================================ */
+[data-theme="tamu"] {
+    --bg: #f4f4f4;
+    --text: #111;
+
+    --navbar-bg: #ececec;
+    --navbar-text: #111;
+
+    /* ONLY TAMU HAS MAROON SIDEBAR */
+    --sidebar-bg: #600000;
+    --sidebar-text: #ffffff;
+    --sidebar-hover: #7a0000;
+    --sidebar-active: #ffffff33;
+
+    --accent: #500000;
+
+    /* ARUA robot display panel */
+    --arua-panel-bg: #000000;
+    --arua-panel-text: #ffffff;
+}
+
+/* ============================================================
+   ROBOTIC THEME
+============================================================ */
+[data-theme="robotic"] {
+    --bg: #202225;
+    --text: #e5e5e5;
+
+    --navbar-bg: #2f3136;
+    --navbar-text: #ffffff;
+
+    --sidebar-bg: #1e1f23;
+    --sidebar-text: #e5e5e5;
+    --sidebar-hover: #3b3d42;
+    --sidebar-active: #4b4d52;
+
+    --accent: #7289da;
+
+    --arua-panel-bg: #1a1a1a;
+    --arua-panel-text: #cccccc;
+}
+
+/* ============================================================
+   DARK THEME
+============================================================ */
+[data-theme="dark"] {
+    --bg: #111;
+    --text: #f1f1f1;
+
+    --navbar-bg: #1a1a1a;
+    --navbar-text: #f1f1f1;
+
+    --sidebar-bg: #000000;
+    --sidebar-text: #dddddd;
+    --sidebar-hover: #222222;
+    --sidebar-active: #444444;
+
+    --accent: #888;
+
+    --arua-panel-bg: #000000;
+    --arua-panel-text: #eaeaea;
+}
+
+/* ============================================================
+   LIGHT THEME
+============================================================ */
+[data-theme="light"] {
+    --bg: #ffffff;
+    --text: #000000;
+
+    --navbar-bg: #ffffff;
+    --navbar-text: #000000;
+
+    --sidebar-bg: #f0f0f0;
+    --sidebar-text: #333;
+    --sidebar-hover: #dddddd;
+    --sidebar-active: #cccccc;
+
+    --accent: #0066ff;
+
+    --arua-panel-bg: #ffffff;
+    --arua-panel-text: #000000;
+}
+
+/* ============================================================
+   GLOBAL SMOOTH TRANSITIONS
+============================================================ */
+* {
+    transition: background-color 0.25s ease, color 0.25s ease;
+}
