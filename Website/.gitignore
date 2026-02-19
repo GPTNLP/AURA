@@ -1,18 +1,41 @@
+# ========================
 # Environment variables
+# ========================
 .env
+*.env
 
-# Node
+# ========================
+# Node / Frontend
+# ========================
 node_modules/
-
-# Vite / build
 dist/
 .vite/
+npm-debug.log*
 
+# ========================
 # Python
+# ========================
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
+venv/
+env/
 
-# OS / editor junk
+# ========================
+# Backend secrets
+# ========================
+backend/admin_users.json
+
+# ========================
+# OS / Editor junk
+# ========================
 .DS_Store
 .vscode/
+.idea/
+
+# ========================
+# Logs
+# ========================
+*.log

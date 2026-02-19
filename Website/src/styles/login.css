@@ -1,16 +1,18 @@
 /* src/styles/login.css */
 
-.login-page {
+/* ===== Page layout ===== */
+.arua-login.login-page {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 28px;
-  background: var(--bg);
-  color: var(--text);
+  display: grid !important;
+  place-items: center !important;
+  padding: 28px !important;
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  position: relative;
 }
 
-/* subtle “premium” background using your theme colors */
-.login-page::before {
+/* subtle background */
+.arua-login.login-page::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -21,7 +23,8 @@
   opacity: 0.9;
 }
 
-.login-card {
+/* ===== Card ===== */
+.arua-login .login-card {
   width: min(460px, 100%);
   background: color-mix(in srgb, var(--card-bg) 92%, transparent);
   border: 1px solid var(--card-border);
@@ -30,95 +33,115 @@
   padding: 22px;
   position: relative;
   backdrop-filter: blur(8px);
+  z-index: 1;
 }
 
-.login-brand {
+/* ===== Brand header ===== */
+.arua-login .login-brand {
   display: flex;
   align-items: center;
   gap: 14px;
   margin-bottom: 18px;
 }
 
-.login-logo {
-  width: 56px;
-  height: 56px;
+.arua-login .login-logo {
+  width: 56px !important;
+  height: 56px !important;
   border-radius: 14px;
   object-fit: cover;
   border: 1px solid var(--card-border);
   box-shadow: var(--shadow);
 }
 
-.login-brand-text {
+.arua-login .login-brand-text {
   line-height: 1.1;
 }
 
-.login-title {
+.arua-login .login-title {
   margin: 0;
   font-size: 22px;
   font-weight: 900;
   letter-spacing: 0.2px;
 }
 
-.login-subtitle {
+.arua-login .login-subtitle {
   margin: 6px 0 0 0;
   font-size: 13px;
   color: var(--muted-text);
 }
 
-.login-form {
-  display: grid;
-  gap: 10px;
+/* ===== Form layout ===== */
+.arua-login form.login-form,
+.arua-login .login-form {
+  display: grid !important;
+  gap: 10px !important;
 }
 
-.login-label {
+.arua-login .login-label {
   font-size: 12px;
   color: var(--muted-text);
 }
 
-.login-input {
-  width: 100%;
-  padding: 12px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--card-border);
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
+/* ===== Inputs ===== */
+.arua-login input.login-input {
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  padding: 12px 12px !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--card-border) !important;
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  outline: none !important;
 }
 
-.login-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+.arua-login input.login-input:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent) !important;
 }
 
-.login-btn {
+/* ===== Buttons ===== */
+.arua-login button.login-btn {
+  display: block !important;
+  width: 100% !important;
   margin-top: 6px;
-  width: 100%;
-  padding: 12px 12px;
-  border: none;
-  border-radius: 12px;
-  cursor: pointer;
-  font-weight: 800;
-  color: white;
-  background: var(--accent);
+  padding: 12px 12px !important;
+  border: none !important;
+  border-radius: 12px !important;
+  cursor: pointer !important;
+  font-weight: 800 !important;
+  color: white !important;
+  background: var(--accent) !important;
   box-shadow: var(--shadow);
 }
 
-.login-btn:hover {
+.arua-login button.login-btn:hover {
   filter: brightness(0.95);
 }
 
-.login-btn:active {
+.arua-login button.login-btn:active {
   transform: translateY(1px);
 }
 
-.login-footnote {
+/* Secondary button (for Student Login / Back) */
+.arua-login .login-btn-secondary {
+  background: transparent !important;
+  color: var(--text) !important;
+  border: 1px solid var(--card-border) !important;
+  box-shadow: none !important;
+  margin-top: 0 !important;
+}
+
+/* ===== Footnote ===== */
+.arua-login .login-footnote {
   margin-top: 6px;
   font-size: 12px;
   color: var(--muted-text);
   text-align: center;
 }
 
-.login-error {
+/* ===== Error ===== */
+.arua-login .login-error {
   margin-top: 10px;
   padding: 10px 12px;
   border-radius: 10px;
@@ -126,4 +149,76 @@
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--text);
   font-size: 0.9rem;
+}
+
+/* ===== OTP MODAL ===== */
+.arua-login .otp-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: grid;
+  place-items: center;
+  z-index: 9999;
+  padding: 18px;
+}
+
+.arua-login .otp-card {
+  width: min(460px, 100%);
+  background: color-mix(in srgb, var(--card-bg) 92%, transparent);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 18px;
+  backdrop-filter: blur(8px);
+}
+
+.arua-login .otp-title {
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.arua-login .otp-subtitle {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+/* OTP input */
+.arua-login .otp-input {
+  display: block !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  padding: 12px 12px !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--card-border) !important;
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  outline: none !important;
+  font-size: 16px;
+  text-align: center;
+  letter-spacing: 2px;
+  margin-top: 12px;
+}
+
+.arua-login .otp-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.arua-login .otp-btn {
+  flex: 1;
+  padding: 12px 12px;
+  border-radius: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text);
+}
+
+.arua-login .otp-verify {
+  background: var(--accent);
+  color: #fff;
+  border: none;
 }

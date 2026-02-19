@@ -3,12 +3,14 @@ import type { ReactNode } from "react";
 
 interface User {
   email: string;
+  role?: "admin" | "student";
 }
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>; // your temp student login (still ok)
+  setSession: (token: string, user: User) => void;
   logout: () => void;
 }
 
@@ -32,7 +34,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return localStorage.getItem(LS_TOKEN);
   });
 
+  const setSession = (t: string, u: User) => {
+    setToken(t);
+    setUser(u);
+    localStorage.setItem(LS_TOKEN, t);
+    localStorage.setItem(LS_USER, JSON.stringify(u));
+  };
+
   const login = async (email: string, password: string) => {
+    // keeping your existing temp student login endpoint
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -45,14 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const data = await res.json();
-    const t = data.token as string;
-    const u = data.user as User;
-
-    setToken(t);
-    setUser(u);
-
-    localStorage.setItem(LS_TOKEN, t);
-    localStorage.setItem(LS_USER, JSON.stringify(u));
+    setSession(data.token, data.user);
   };
 
   const logout = () => {
@@ -62,7 +65,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(LS_TOKEN);
   };
 
-  const value = useMemo(() => ({ user, token, login, logout }), [user, token]);
+  const value = useMemo(
+    () => ({ user, token, login, setSession, logout }),
+    [user, token]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
