@@ -16,8 +16,8 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>(null as any);
 
-const LS_USER = "arua-user";
-const LS_TOKEN = "arua-auth-token";
+const LS_USER = "aura-user";
+const LS_TOKEN = "aura-auth-token";
 
 const API_BASE =
   import.meta.env.VITE_AUTH_API_BASE ||

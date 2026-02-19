@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Load .env from Website/.env (one directory above /backend)
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-app = FastAPI(title="ARUA Backend", version="0.1.0")
+app = FastAPI(title="AURA Backend", version="0.1.0")
 
 # ---- CORS ----
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
@@ -25,21 +25,31 @@ if ALLOWED_ORIGINS:
 def health():
     return {"ok": True}
 
-# ---- Routers ----
-# IMPORTANT: These filenames MUST match your backend folder filenames.
+# ---- Routers / Apps ----
 
+# Camera API router (APIRouter)
 from camera_api import router as camera_router
 app.include_router(camera_router)
 
-# If your admin auth router is in admin_api.py (or auth_api.py), import accordingly:
+# ✅ Admin Auth API router (APIRouter) -> provides /auth/admin/login, /auth/admin/verify, /auth/admin/me
 try:
-    from admin_api import router as admin_router
-    app.include_router(admin_router)
+    from admin_auth_api import router as admin_auth_router
+    app.include_router(admin_auth_router)
 except Exception as e:
-    print("admin_api router not loaded:", e)
+    print("admin_auth_api router not loaded:", e)
 
+# Optional: Student auth router (APIRouter) if you want it active
 try:
-    from auth_api import router as auth_router
-    app.include_router(auth_router)
+    from student_auth_api import router as student_auth_router
+    app.include_router(student_auth_router)
 except Exception as e:
-    print("auth_api router not loaded:", e)
+    print("student_auth_api router not loaded:", e)
+
+# Optional: Admin tools API (this file uses app = FastAPI(), not APIRouter)
+# Your admin_api.py contains /api/upload, /api/build, /api/deploy, /api/nano-status
+# Mount it under /admin-tools so it doesn't collide with other routes.
+try:
+    from admin_api import app as admin_tools_app
+    app.mount("/admin-tools", admin_tools_app)
+except Exception as e:
+    print("admin_api (tools) app not loaded:", e)

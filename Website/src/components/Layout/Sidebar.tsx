@@ -4,7 +4,7 @@ import "../../styles/sidebar.css";
 export default function Sidebar() {
     return (
         <aside className="sidebar">
-            <h1 className="sidebar-title">ARUA</h1>
+            <h1 className="sidebar-title">AURA</h1>
 
             <nav className="sidebar-nav">
                 <NavLink to="/" end className="sidebar-link">

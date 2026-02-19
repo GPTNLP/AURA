@@ -1,6 +1,8 @@
 import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "../services/authService";
+
+import Layout from "../components/Layout/Layout";
 
 import LoginPage from "../pages/LoginPage";
 import DashboardPage from "../pages/DashboardPage";
@@ -10,10 +12,14 @@ import SettingsPage from "../pages/SettingsPage";
 import Admin from "../pages/admin";
 import StudentPortal from "../pages/StudentPortal";
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedLayout() {
   const { token } = useAuth();
   if (!token) return <Navigate to="/login" replace />;
-  return <>{children}</>;
+  return (
+    <Layout>
+      <Outlet />
+    </Layout>
+  );
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
@@ -30,49 +36,22 @@ export default function AppRouter() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/student-portal" element={<StudentPortal />} />
 
-      {/* Protected */}
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <DashboardPage />
-          </ProtectedRoute>
-        }
-      />
+      {/* Protected pages wrapped by Layout */}
+      <Route element={<ProtectedLayout />}>
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/camera" element={<CameraPage />} />
+        <Route path="/control" element={<ControlPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+      </Route>
 
-      <Route
-        path="/camera"
-        element={
-          <ProtectedRoute>
-            <CameraPage />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/control"
-        element={
-          <ProtectedRoute>
-            <ControlPage />
-          </ProtectedRoute>
-        }
-      />
-
-      <Route
-        path="/settings"
-        element={
-          <ProtectedRoute>
-            <SettingsPage />
-          </ProtectedRoute>
-        }
-      />
-
-      {/* Admin-only */}
+      {/* Admin-only (also wrapped in Layout if you want it to have sidebar/navbar) */}
       <Route
         path="/ml-admin"
         element={
           <AdminRoute>
-            <Admin />
+            <Layout>
+              <Admin />
+            </Layout>
           </AdminRoute>
         }
       />

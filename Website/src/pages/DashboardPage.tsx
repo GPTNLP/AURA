@@ -38,12 +38,12 @@ export default function DashboardPage() {
 
   return (
     <div className="dashboard-page">
-      <div className="arua-header">
-        <div className="arua-panel">
-          <img src={robotImage} alt="ARUA" className="arua-img" />
-          <div className="arua-text">
-            <h1 className="arua-title">{data?.robot.name ?? "ARUA"}</h1>
-            <div className="arua-sub">
+      <div className="aura-header">
+        <div className="aura-panel">
+          <img src={robotImage} alt="AURA" className="aura-img" />
+          <div className="aura-text">
+            <h1 className="aura-title">{data?.robot.name ?? "AURA"}</h1>
+            <div className="aura-sub">
               Status: <b>{data?.robot.status ?? "—"}</b>
               {updatedLabel ? <> • Updated {updatedLabel}</> : null}
             </div>

@@ -1,3 +1,20 @@
+/* LOAD ALL STYLES -------------------------------------------------- */
+@import "./theme.css";
+@import "./layout.css";
+@import "./navbar.css";
+@import "./sidebar.css";
+
+@import "./dashboard.css";
+@import "./controlPage.css";
+@import "./cameraPage.css";
+@import "./cameraFeed.css";
+@import "./chatPage.css";
+@import "./settings.css";
+@import "./login.css";
+@import "./robotPanel.css";
+@import "./animations.css";
+@import "./App.css";
+
 /* RESET + BASE -------------------------------------------------- */
 
 * {
@@ -30,29 +47,29 @@ button {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-    width: 9px;
+  width: 9px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.2);
-    border-radius: 4px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 4px;
 }
 
 [data-theme="tamu"] ::-webkit-scrollbar-thumb {
-    background: #5c0000;
+  background: #5c0000;
 }
 
 h1, h2, h3 {
-    color: var(--text);
+  color: var(--text);
 }
 
 p, label, .muted {
-    color: var(--muted-text);
+  color: var(--muted-text);
 }
 
 input:focus,
 select:focus,
 button:focus {
-    outline: none;
-    box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }

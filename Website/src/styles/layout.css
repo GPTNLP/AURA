@@ -47,9 +47,9 @@ html, body, #root {
 
     --accent: #0066ff;
 
-    /* ARUA robot profile panel */
-    --arua-panel-bg: #ffffff;
-    --arua-panel-text: #000000;
+    /* AURA robot profile panel */
+    --aura-panel-bg: #ffffff;
+    --aura-panel-text: #000000;
 
     /* Status Card danger levels */
     --status-good: #2ecc71;
@@ -58,7 +58,7 @@ html, body, #root {
 }
 
 /* ============================================================
-   TAMU THEME (MAROON SIDEBAR + BLACK ARUA PANEL)
+   TAMU THEME (MAROON SIDEBAR + BLACK AURA PANEL)
 ============================================================ */
 [data-theme="tamu"] {
     --bg: #f4f4f4;
@@ -75,9 +75,9 @@ html, body, #root {
 
     --accent: #500000;
 
-    /* ARUA robot display panel */
-    --arua-panel-bg: #000000;
-    --arua-panel-text: #ffffff;
+    /* AURA robot display panel */
+    --aura-panel-bg: #000000;
+    --aura-panel-text: #ffffff;
 }
 
 /* ============================================================
@@ -97,8 +97,8 @@ html, body, #root {
 
     --accent: #7289da;
 
-    --arua-panel-bg: #1a1a1a;
-    --arua-panel-text: #cccccc;
+    --aura-panel-bg: #1a1a1a;
+    --aura-panel-text: #cccccc;
 }
 
 /* ============================================================
@@ -118,8 +118,8 @@ html, body, #root {
 
     --accent: #888;
 
-    --arua-panel-bg: #000000;
-    --arua-panel-text: #eaeaea;
+    --aura-panel-bg: #000000;
+    --aura-panel-text: #eaeaea;
 }
 
 /* ============================================================
@@ -139,8 +139,8 @@ html, body, #root {
 
     --accent: #0066ff;
 
-    --arua-panel-bg: #ffffff;
-    --arua-panel-text: #000000;
+    --aura-panel-bg: #ffffff;
+    --aura-panel-text: #000000;
 }
 
 /* ============================================================
