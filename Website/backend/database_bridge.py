@@ -2,120 +2,106 @@
 Bridge for database operations. 
 """
 
+"""
+Bridge for database operations using LightRAG indexing.
+"""
+
 import os
-import json
-import gc
 import shutil
-from typing import List, Dict, Any, Optional
-from uuid import uuid4
-from datetime import datetime
-
-import torch
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, TextLoader
-from langchain_core.documents import Document
-from langchain_ollama import OllamaEmbeddings
-from langchain_chroma import Chroma
+import gc
+import networkx as nx
+from typing import List
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, DirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_chroma import Chroma
+from config import CHROMA_DIR, CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL, DEFAULT_MODEL
+from lightrag import LightRAG
 
-from config import CHUNK_SIZE, CHUNK_OVERLAP, CHROMA_DIR, STORAGE_DIR, SESSIONS_DIR
-
-SPLITTER = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-
-def ClearCudaCache():
-    """Aggressively clear memory."""
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
+def ClearMemory():
+    """Force garbage collection."""
     gc.collect()
 
-def LoadDocuments(path: str) -> List[Document]:
-    """Load documents from the staging directory."""
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-        return []
-    
-    # Only using PDF and TXT for reliability
-    loaders = {
-        ".pdf": DirectoryLoader(path, glob="**/*.pdf", loader_cls=PyPDFLoader),
-        ".txt": DirectoryLoader(path, glob="**/*.txt", loader_cls=TextLoader),
-    }
-
-    docs = []
-    for file_type, loader in loaders.items():
-        try:
-            loaded = loader.load()
-            if loaded:
-                docs.extend(loaded)
-                print(f"Loaded {len(loaded)} {file_type} files")
-        except Exception as e:
-            print(f"Warning: Could not load {file_type} files: {e}")
-    
-    return docs
-
-def InitializeDatabase(embedding_model: str, docs_path: str, force_reload: bool = False) -> Chroma:
+def InitializeDatabase(docs_path: str, force_rebuild: bool = False):
     """
-    Initialize or rebuild the Chroma vector database.
+    Builds the LightRAG Graph and ChromaDB from documents.
+    Used primarily by the Admin Backend.
     """
-    os.makedirs(STORAGE_DIR, exist_ok=True)
-    os.makedirs(CHROMA_DIR, exist_ok=True)
-
-    embeddings = OllamaEmbeddings(model=embedding_model)
-    db_exists = os.path.isdir(CHROMA_DIR) and len(os.listdir(CHROMA_DIR)) > 0
-
-    if force_reload:
-        print("Force reload: Rebuilding database...")
-        # Clear existing
-        if os.path.exists(CHROMA_DIR):
-            shutil.rmtree(CHROMA_DIR)
-            os.makedirs(CHROMA_DIR)
-
-        raw_docs = LoadDocuments(docs_path)
-        if not raw_docs:
-            # Return empty DB if no docs, to prevent crash
-            print("No documents found to index.")
-            return Chroma(embedding_function=embeddings, persist_directory=CHROMA_DIR)
-
-        chunks = SPLITTER.split_documents(raw_docs)
-        print(f"Generating embeddings for {len(chunks)} chunks...")
+    embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+    llm = OllamaLLM(model=DEFAULT_MODEL)
+    
+    # Path to save the NetworkX graph alongside the Chroma SQLite files
+    graph_path = os.path.join(CHROMA_DIR, "lightrag.graphml")
+    
+    if force_rebuild and os.path.exists(CHROMA_DIR):
+        shutil.rmtree(CHROMA_DIR)
         
-        db = Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=CHROMA_DIR
-        )
-        print("Database built.")
-        return db
+    if not os.path.exists(CHROMA_DIR):
+        os.makedirs(CHROMA_DIR)
+        
+        # 1. Load Docs
+        loaders = {
+            ".pdf": DirectoryLoader(docs_path, glob="**/*.pdf", loader_cls=PyPDFLoader),
+            ".txt": DirectoryLoader(docs_path, glob="**/*.txt", loader_cls=TextLoader),
+        }
+        
+        docs = []
+        for ext, loader in loaders.items():
+            try:
+                docs.extend(loader.load())
+            except Exception as e:
+                print(f"Error loading {ext}: {e}")
+        
+        if not docs:
+            return None
 
-    # Load existing
-    print(f"Loading existing database from {CHROMA_DIR}")
-    return Chroma(embedding_function=embeddings, persist_directory=CHROMA_DIR)
-
-def ZipDatabase() -> str:
-    """Zips the chroma directory for export."""
-    shutil.make_archive("chroma_db", 'zip', CHROMA_DIR)
-    return "chroma_db.zip"
-
-def SaveSession(session_data: Dict[str, Any], session_id: Optional[str] = None) -> str:
-    os.makedirs(SESSIONS_DIR, exist_ok=True)
-    if session_id is None:
-        session_id = str(uuid4())
+        # 2. Split into Chunks
+        splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+        chunks = splitter.split_documents(docs)
+        
+        # 3. Initialize Databases
+        vector_db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+        rag_system = LightRAG(llm=llm, vector_db=vector_db)
+        
+        # 4. Build LightRAG Index (LLM Extraction + Graph Building + Vector Insertion)
+        print(f"Starting LightRAG graph-based indexing on {len(chunks)} chunks...")
+        print("NOTE: This will take a significant amount of time on edge hardware.")
+        rag_system.build_index(chunks)
+        
+        # 5. Persist the Graph
+        # We save this in CHROMA_DIR so the admin_api.py zip process captures it for deployment
+        nx.write_graphml(rag_system.graph_db, graph_path)
+        print("Graph and Vector Database built and saved successfully.")
+        
+        return rag_system
     
-    session_data['timestamp'] = datetime.now().isoformat()
-    session_data['session_id'] = session_id
+    # If not rebuilding, just load existing data
+    vector_db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+    rag_system = LightRAG(llm=llm, vector_db=vector_db)
     
-    filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
-    with open(filepath, 'w') as f:
-        json.dump(session_data, f, indent=2)
-    return session_id
+    if os.path.exists(graph_path):
+        rag_system.graph_db = nx.read_graphml(graph_path)
+        
+    return rag_system
 
-def ListSessions() -> List[str]:
-    if not os.path.exists(SESSIONS_DIR):
-        return []
-    return sorted([f[:-5] for f in os.listdir(SESSIONS_DIR) if f.endswith('.json')])
-
-def LoadSession(session_id: str) -> Dict[str, Any]:
-    filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
-    if not os.path.exists(filepath):
-        return {}
-    with open(filepath, 'r') as f:
-        return json.load(f)
+def LoadDatabase():
+    """
+    Loads the existing LightRAG DB (Graph + Vector).
+    Used by the Edge Nano Backend for querying.
+    """
+    if not os.path.exists(CHROMA_DIR) or not os.listdir(CHROMA_DIR):
+        return None
+        
+    embeddings = OllamaEmbeddings(model=EMBEDDING_MODEL)
+    llm = OllamaLLM(model=DEFAULT_MODEL)
+    
+    vector_db = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+    rag_system = LightRAG(llm=llm, vector_db=vector_db)
+    
+    graph_path = os.path.join(CHROMA_DIR, "lightrag.graphml")
+    if os.path.exists(graph_path):
+        rag_system.graph_db = nx.read_graphml(graph_path)
+    else:
+        print("Warning: Chroma DB found, but LightRAG graphml file is missing!")
+        
+    return rag_system
