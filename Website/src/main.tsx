@@ -6,9 +6,14 @@ import { MsalProvider } from "@azure/msal-react";
 import AppRouter from "./router/AppRouter";
 import { AuthProvider } from "./services/authService";
 import { msalInstance } from "./msal";
-import "./styles/index.css";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+import "./styles/index.css";
+import "./styles/theme.css";
+import "./styles/layout.css";
+import "./styles/sidebar.css";
+import "./styles/navbar.css";
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <MsalProvider instance={msalInstance}>
       <AuthProvider>

@@ -1,35 +1,30 @@
 import "../styles/login.css";
-
-const API_BASE =
-  import.meta.env.VITE_AUTH_API_BASE ||
-  import.meta.env.VITE_CAMERA_API_BASE ||
-  "http://127.0.0.1:9000";
+import logo from "../assets/robot.png";
 
 export default function StudentPortal() {
-  const start = () => {
-    // This should be your FastAPI OIDC login route
-    window.location.href = `${API_BASE}/auth/student/login`;
-  };
-
   return (
-    <div className="login-page arua-login">
+    <div className="aura-login login-page">
       <div className="login-card">
         <div className="login-brand">
+          <img src={logo} alt="AURA" className="login-logo" />
           <div className="login-brand-text">
-            <h1 className="login-title">Student Login</h1>
+            <h1 className="login-title">TAMU Student Login</h1>
             <p className="login-subtitle">
-              You will be redirected to TAMU SSO (OIDC).
+              Student login is handled on the main login screen.
             </p>
           </div>
         </div>
 
         <div className="login-form">
-          <button className="login-btn" onClick={start}>
-            Continue with TAMU SSO
+          <button
+            className="login-btn login-btn-secondary"
+            onClick={() => window.history.back()}
+          >
+            ← Back to Login
           </button>
 
           <div className="login-footnote">
-            If nothing opens, your backend may be offline (check /health).
+            If you want backend OIDC later, we’ll wire it here.
           </div>
         </div>
       </div>

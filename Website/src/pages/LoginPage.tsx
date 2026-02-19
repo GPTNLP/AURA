@@ -20,7 +20,7 @@ const AZURE_SCOPES = String(import.meta.env.VITE_AZURE_SCOPES || "openid,profile
 export default function LoginPage() {
   const { setSession } = useAuth();
   const navigate = useNavigate();
-  const { instance, accounts } = useMsal();
+  const { instance } = useMsal();
 
   const [mode, setMode] = useState<"select" | "admin">("select");
   const [email, setEmail] = useState("");
@@ -33,20 +33,18 @@ export default function LoginPage() {
   const [otpError, setOtpError] = useState<string | null>(null);
 
   // =========================
-  // Student (Azure Entra) Login
+  // Student (MSAL) Login
   // =========================
   const handleStudentLogin = async () => {
     setError(null);
     setLoading(true);
 
     try {
-      // Start interactive login
       const result = await instance.loginPopup({
         scopes: AZURE_SCOPES,
         prompt: "select_account",
       });
 
-      // Pick email from claims
       const claims: any = result?.account?.idTokenClaims || {};
       const userEmail: string =
         claims?.email ||
@@ -54,35 +52,24 @@ export default function LoginPage() {
         result?.account?.username ||
         "";
 
-      if (!userEmail) {
-        throw new Error("Microsoft login succeeded but no email was returned.");
-      }
-
-      // (Optional) enforce TAMU-only on frontend too (backend will enforce later)
+      if (!userEmail) throw new Error("Microsoft login succeeded but no email was returned.");
       if (!userEmail.toLowerCase().endsWith("@tamu.edu")) {
         throw new Error("Only TAMU accounts are allowed.");
       }
 
-      // If you want to send the Microsoft access token to backend later, you can store it here.
-      // For now, we just create a session in the frontend.
-      const idToken = (result as any)?.idToken || null;
+      const idToken = (result as any)?.idToken || "msal-session";
 
-      setSession(idToken || "msal-session", { email: userEmail, role: "student" });
+      // Create a frontend session for your existing ProtectedRoute flow
+      setSession(idToken, { email: userEmail, role: "student" });
 
-      // Go wherever you want students to land
-      navigate("/dashboard", { replace: true });
+      // Your dashboard is "/", not "/dashboard"
+      navigate("/", { replace: true });
     } catch (e: any) {
       setError(e?.message || "Student login failed.");
     } finally {
       setLoading(false);
     }
   };
-
-  // If already signed in with MSAL and refreshing the page, you can auto-route:
-  // (Optional - comment out if you don't want it)
-  // if (accounts?.length && mode === "select") {
-  //   navigate("/dashboard", { replace: true });
-  // }
 
   // =========================
   // Admin login (Step 1)
@@ -121,13 +108,9 @@ export default function LoginPage() {
     }
 
     const data = await res.json();
-
-    // ✅ IMPORTANT: update AuthContext state (not just localStorage)
     setSession(data.token, data.user);
 
     setShowOtp(false);
-
-    // Go to your ML admin page route (matches your router)
     navigate("/ml-admin", { replace: true });
   };
 
@@ -156,12 +139,15 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* SELECT */}
         {mode === "select" && (
           <div className="login-form">
             {error && <div className="login-error">{error}</div>}
 
-            <button className="login-btn" onClick={() => setMode("admin")} disabled={loading}>
+            <button
+              className="login-btn"
+              onClick={() => setMode("admin")}
+              disabled={loading}
+            >
               Admin Login
             </button>
 
@@ -178,7 +164,6 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* ADMIN */}
         {mode === "admin" && (
           <form onSubmit={handleAdminSubmit} className="login-form">
             <label className="login-label">Admin Email</label>
