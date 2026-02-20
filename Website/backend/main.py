@@ -25,20 +25,20 @@ if ALLOWED_ORIGINS:
 def health():
     return {"ok": True}
 
-# ---- Routers / Apps ----
+# ---- Routers ----
 
 # Camera API router (APIRouter)
 from camera_api import router as camera_router
 app.include_router(camera_router)
 
-# ✅ Admin Auth API router (APIRouter) -> provides /auth/admin/login, /auth/admin/verify, /auth/admin/me
+# Admin Auth API router (APIRouter) -> /auth/admin/login, /auth/admin/verify, /auth/admin/me
 try:
     from admin_auth_api import router as admin_auth_router
     app.include_router(admin_auth_router)
 except Exception as e:
     print("admin_auth_api router not loaded:", e)
 
-# Optional: Student auth router (APIRouter) if you want it active
+# Student OTP router (APIRouter) -> /auth/student/start, /auth/student/verify
 try:
     from student_auth_api import router as student_auth_router
     app.include_router(student_auth_router)
@@ -46,7 +46,6 @@ except Exception as e:
     print("student_auth_api router not loaded:", e)
 
 # Optional: Admin tools API (this file uses app = FastAPI(), not APIRouter)
-# Your admin_api.py contains /api/upload, /api/build, /api/deploy, /api/nano-status
 # Mount it under /admin-tools so it doesn't collide with other routes.
 try:
     from admin_api import app as admin_tools_app

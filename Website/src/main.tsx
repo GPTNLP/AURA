@@ -1,25 +1,22 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import { MsalProvider } from "@azure/msal-react";
 
 import AppRouter from "./router/AppRouter";
 import { AuthProvider } from "./services/authService";
-import { msalInstance } from "./msal";
-import { loadTheme, applyTheme } from "./services/themeStore";
 import "./styles/index.css";
 
 // Apply saved theme BEFORE React renders
+import { loadTheme, applyTheme } from "./services/themeStore";
+import "./styles/index.css";
 applyTheme(loadTheme());
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <MsalProvider instance={msalInstance}>
+    <BrowserRouter>
       <AuthProvider>
-        <BrowserRouter>
-          <AppRouter />
-        </BrowserRouter>
+        <AppRouter />
       </AuthProvider>
-    </MsalProvider>
+    </BrowserRouter>
   </React.StrictMode>
 );

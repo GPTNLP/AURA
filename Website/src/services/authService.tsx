@@ -9,7 +9,15 @@ interface User {
 interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (email: string, password: string) => Promise<void>; // your temp student login (still ok)
+
+  // Admin OTP flow
+  adminStartLogin: (email: string, password: string) => Promise<void>;
+  adminVerifyOtp: (email: string, otp: string) => Promise<void>;
+
+  // Student OTP flow (no password)
+  studentStart: (email: string) => Promise<void>;
+  studentVerify: (email: string, otp: string) => Promise<void>;
+
   setSession: (token: string, user: User) => void;
   logout: () => void;
 }
@@ -41,9 +49,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(LS_USER, JSON.stringify(u));
   };
 
-  const login = async (email: string, password: string) => {
-    // keeping your existing temp student login endpoint
-    const res = await fetch(`${API_BASE}/auth/login`, {
+  // -----------------------
+  // Admin OTP
+  // -----------------------
+  const adminStartLogin = async (email: string, password: string) => {
+    const res = await fetch(`${API_BASE}/auth/admin/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: email.trim(), password }),
@@ -51,7 +61,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!res.ok) {
       const msg = await res.text();
-      throw new Error(msg || "Login failed");
+      throw new Error(msg || "Admin login failed");
+    }
+  };
+
+  const adminVerifyOtp = async (email: string, otp: string) => {
+    const res = await fetch(`${API_BASE}/auth/admin/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || "Invalid OTP");
+    }
+
+    const data = await res.json();
+    setSession(data.token, data.user);
+  };
+
+  // -----------------------
+  // Student OTP (no password)
+  // -----------------------
+  const studentStart = async (email: string) => {
+    const res = await fetch(`${API_BASE}/auth/student/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim() }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || "Student OTP start failed");
+    }
+  };
+
+  const studentVerify = async (email: string, otp: string) => {
+    const res = await fetch(`${API_BASE}/auth/student/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || "Invalid OTP");
     }
 
     const data = await res.json();
@@ -66,7 +121,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const value = useMemo(
-    () => ({ user, token, login, setSession, logout }),
+    () => ({
+      user,
+      token,
+      adminStartLogin,
+      adminVerifyOtp,
+      studentStart,
+      studentVerify,
+      setSession,
+      logout,
+    }),
     [user, token]
   );
 

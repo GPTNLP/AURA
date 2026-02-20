@@ -42,7 +42,7 @@ export default function DashboardPage() {
         <div className="aura-panel">
           <img src={robotImage} alt="AURA" className="aura-img" />
           <div className="aura-text">
-            <h1 className="aura-title">{data?.robot.name ?? "AURA"}</h1>
+            <h1 className="aura-title">{"AURA"}</h1>
             <div className="aura-sub">
               Status: <b>{data?.robot.status ?? "—"}</b>
               {updatedLabel ? <> • Updated {updatedLabel}</> : null}

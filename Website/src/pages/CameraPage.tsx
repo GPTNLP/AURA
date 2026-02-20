@@ -1,5 +1,5 @@
-import CameraFeedSecure from "../components/UI/CameraFeedSecure";
 import "../styles/cameraPage.css";
+import CameraFeedSecure from "../components/UI/CameraFeedSecure";
 
 export default function CameraPage() {
   return (

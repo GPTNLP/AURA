@@ -6,7 +6,7 @@ export default function Navbar() {
 
     return (
         <header className="navbar">
-            <span className="navbar-title">ARUA Control Panel</span>
+            <span className="navbar-title">AURA Control Panel</span>
 
             <div className="navbar-right">
                 <span className="navbar-user">{user?.email}</span>
