@@ -2,13 +2,13 @@
   padding: 24px;
 }
 
-.arua-header {
+.aura-header {
   display: flex;
   justify-content: center;
   margin-bottom: 18px;
 }
 
-.arua-panel {
+.aura-panel {
   display: flex;
   align-items: center;
   gap: 16px;
@@ -19,25 +19,25 @@
   box-shadow: var(--shadow);
 }
 
-.arua-img {
+.aura-img {
   width: 56px;
   height: 56px;
   object-fit: cover;
   border-radius: 12px;
 }
 
-.arua-text {
+.aura-text {
   display: flex;
   flex-direction: column;
   line-height: 1.05;
 }
 
-.arua-title {
+.aura-title {
   margin: 0;
   font-size: 28px;
 }
 
-.arua-sub {
+.aura-sub {
   margin-top: 6px;
   font-size: 13px;
   color: var(--muted-text);

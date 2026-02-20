@@ -4,7 +4,7 @@
 export type ThemeOption = "tamu" | "robotic" | "dark" | "light";
 
 // ===== LocalStorage key =====
-const THEME_KEY = "arua-theme";
+const THEME_KEY = "aura-theme";
 
 // ===== Load saved theme OR default to TAMU =====
 export function loadTheme(): ThemeOption {
@@ -14,7 +14,7 @@ export function loadTheme(): ThemeOption {
 
 // ===== Save theme =====
 export function saveTheme(theme: ThemeOption) {
-  localStorage.setItem("arua-theme", theme)
+  localStorage.setItem("aura-theme", theme)
 }
 
 // ===== Apply theme to HTML root =====

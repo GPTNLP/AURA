@@ -6,14 +6,13 @@ import { MsalProvider } from "@azure/msal-react";
 import AppRouter from "./router/AppRouter";
 import { AuthProvider } from "./services/authService";
 import { msalInstance } from "./msal";
-
+import { loadTheme, applyTheme } from "./services/themeStore";
 import "./styles/index.css";
-import "./styles/theme.css";
-import "./styles/layout.css";
-import "./styles/sidebar.css";
-import "./styles/navbar.css";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+// Apply saved theme BEFORE React renders
+applyTheme(loadTheme());
+
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <MsalProvider instance={msalInstance}>
       <AuthProvider>

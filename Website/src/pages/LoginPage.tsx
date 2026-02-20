@@ -111,7 +111,7 @@ export default function LoginPage() {
     setSession(data.token, data.user);
 
     setShowOtp(false);
-    navigate("/ml-admin", { replace: true });
+    navigate("/", { replace: true });
   };
 
   const handleAdminSubmit = async (e: React.FormEvent) => {
