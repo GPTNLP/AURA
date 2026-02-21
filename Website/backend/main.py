@@ -1,4 +1,4 @@
-# Website/backend/main.py
+# backend/main.py
 import os
 from pathlib import Path
 
@@ -6,10 +6,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+# Load .env for LOCAL DEV only (Azure/App Service will use real environment vars)
+env_path = Path(__file__).resolve().parents[1] / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
-app = FastAPI(title="AURA Backend", version="0.1.0")
+# Optional: hide docs in production
+ENV = os.getenv("ENV", "").lower()
+docs_url = None if ENV in ("prod", "production") else "/docs"
+redoc_url = None if ENV in ("prod", "production") else "/redoc"
 
+app = FastAPI(
+    title="AURA Backend",
+    version="0.1.0",
+    docs_url=docs_url,
+    redoc_url=redoc_url,
+)
+
+# ---- CORS ----
 ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 if ALLOWED_ORIGINS:
     app.add_middleware(
@@ -25,24 +39,28 @@ def health():
     return {"ok": True}
 
 # ---- Routers ----
-def try_include(import_path: str, name: str):
+# Use explicit imports so errors are clear + stack traces are readable
+def include_router_safely(module_name: str, label: str):
     try:
-        mod = __import__(import_path, fromlist=["router"])
-        app.include_router(mod.router)
-        print(f"Loaded router: {name}")
+        mod = __import__(module_name, fromlist=["router"])
+        router = getattr(mod, "router", None)
+        if router is None:
+            raise RuntimeError(f"{module_name} has no attribute 'router'")
+        app.include_router(router)
+        print(f"✅ Loaded router: {label}")
     except Exception as e:
-        print(f"Router not loaded ({name}): {e}")
+        print(f"⚠️ Router not loaded ({label}): {e}")
 
-try_include("camera_api", "camera_api")
-try_include("files_api", "files_api")
-try_include("admin_auth_api", "admin_auth_api")
-try_include("student_auth_api", "student_auth_api")
-try_include("logs_api", "logs_api")
+include_router_safely("camera_api", "camera_api")
+include_router_safely("files_api", "files_api")
+include_router_safely("admin_auth_api", "admin_auth_api")
+include_router_safely("student_auth_api", "student_auth_api")
+include_router_safely("logs_api", "logs_api")
 
-# Optional: Admin tools API (FastAPI app)
+# Optional: mount admin tools app
 try:
     from admin_api import app as admin_tools_app
     app.mount("/admin-tools", admin_tools_app)
-    print("Mounted admin-tools app")
+    print("✅ Mounted admin-tools app at /admin-tools")
 except Exception as e:
-    print("admin_api (tools) app not loaded:", e)
+    print("⚠️ admin_api (tools) app not loaded:", e)

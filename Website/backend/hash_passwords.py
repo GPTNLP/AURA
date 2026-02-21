@@ -1,33 +1,55 @@
+# backend/hash_passwords.py
 import os
-import json
 import base64
 import hashlib
 import hmac
-import getpass
+
+ALGO_PREFIX = "pbkdf2_sha256"
+
+def _b64encode_nopad(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+
+def _b64decode_nopad(s: str) -> bytes:
+    # add padding back
+    pad = "=" * ((4 - (len(s) % 4)) % 4)
+    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
 
 def hash_password(password: str, iterations: int = 200_000) -> str:
     """
-    Returns string format:
+    Returns:
     pbkdf2_sha256$<iterations>$<salt_b64>$<hash_b64>
     """
+    if not isinstance(password, str) or not password:
+        raise ValueError("password must be a non-empty string")
+
     salt = os.urandom(16)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return "pbkdf2_sha256${}${}${}".format(
-        iterations,
-        base64.urlsafe_b64encode(salt).decode("utf-8").rstrip("="),
-        base64.urlsafe_b64encode(dk).decode("utf-8").rstrip("="),
-    )
+    return f"{ALGO_PREFIX}${iterations}${_b64encode_nopad(salt)}${_b64encode_nopad(dk)}"
 
-path = "admin_users.json"
-with open(path, "r", encoding="utf-8") as f:
-    data = json.load(f)
+def verify_password(password: str, stored: str) -> bool:
+    """
+    Verifies a plaintext password against stored PBKDF2 hash.
+    Uses constant-time compare.
+    """
+    try:
+        if not isinstance(password, str) or not password:
+            return False
+        if not isinstance(stored, str) or not stored:
+            return False
 
-for admin in data["admins"]:
-    email = admin["email"]
-    pw = getpass.getpass(f"Enter password for {email}: ").strip()
-    admin["password_hash"] = hash_password(pw)
+        parts = stored.split("$")
+        if len(parts) != 4:
+            return False
 
-with open(path, "w", encoding="utf-8") as f:
-    json.dump(data, f, indent=2)
+        algo, iter_s, salt_b64, hash_b64 = parts
+        if algo != ALGO_PREFIX:
+            return False
 
-print("\n✅ Saved PBKDF2 password hashes to admin_users.json\n")
+        iterations = int(iter_s)
+        salt = _b64decode_nopad(salt_b64)
+        expected = _b64decode_nopad(hash_b64)
+
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(dk, expected)
+    except Exception:
+        return False

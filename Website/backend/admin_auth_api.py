@@ -1,24 +1,26 @@
+# backend/admin_auth_api.py
 import os
 import time
 import json
-import base64
-import hmac
-import hashlib
 import random
 import smtplib
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Dict, Any
 
-from fastapi import APIRouter, Request, HTTPException
-from dotenv import load_dotenv
+from fastapi import APIRouter, Request, HTTPException, Response
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 from security import require_ip_allowlist
 from security_tokens import mint_app_token
+from hash_passwords import verify_password as verify_pbkdf2_password
+from otp_store import OTPStore, hash_code
 
-# Load .env
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+# Local dev only
+env_path = Path(__file__).resolve().parents[1] / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
 # SMTP settings
 SMTP_HOST = os.getenv("SMTP_HOST", "")
@@ -27,53 +29,69 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 
-# Admin user store
+# Admin user store (read-only; no signup)
 ADMIN_USERS_PATH = Path(__file__).resolve().parent / "admin_users.json"
 
-router = APIRouter(prefix="/auth/admin", tags=["admin-auth"])
+# Admin settings
+ADMIN_OTP_TTL_SECONDS = int(os.getenv("ADMIN_OTP_TTL_SECONDS", "300"))  # 5 min
+ADMIN_MAX_OTP_ATTEMPTS = int(os.getenv("ADMIN_MAX_OTP_ATTEMPTS", "5"))
 
+# Simple IP rate limit (per window)
+ADMIN_LOGIN_RATE_WINDOW = int(os.getenv("ADMIN_LOGIN_RATE_WINDOW", "300"))
+ADMIN_LOGIN_RATE_MAX = int(os.getenv("ADMIN_LOGIN_RATE_MAX", "10"))
+
+router = APIRouter(prefix="/auth/admin", tags=["admin-auth"])
+otp_store = OTPStore(prefix="adminotp")
 
 class AdminLoginRequest(BaseModel):
     email: str
     password: str
 
-
 class AdminVerifyRequest(BaseModel):
     email: str
     otp: str
 
+# --- Simple in-memory rate store (OK; Redis later if you want) ---
+_RATE: Dict[str, Dict[str, Any]] = {}
 
-# ---------------------------
-# PBKDF2 password verify
-# stored format: pbkdf2_sha256$<iterations>$<salt_b64>$<hash_b64>
-# ---------------------------
-def _b64url_decode(data: str) -> bytes:
-    pad = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + pad)
+def _client_ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
+def _rate_limit_or_429(ip: str):
+    now = int(time.time())
+    rec = _RATE.get(ip)
+    if not rec or now - rec["start"] >= ADMIN_LOGIN_RATE_WINDOW:
+        _RATE[ip] = {"start": now, "count": 1}
+        return
+    rec["count"] += 1
+    if rec["count"] > ADMIN_LOGIN_RATE_MAX:
+        raise HTTPException(status_code=429, detail="Too many requests")
 
-def verify_password(password: str, stored: str) -> bool:
-    try:
-        algo, iters, salt_b64, hash_b64 = stored.split("$", 3)
-        if algo != "pbkdf2_sha256":
-            return False
+def _send_otp_email(to_email: str, code: str):
+    if not SMTP_HOST or not SMTP_USER or not SMTP_PASS:
+        raise HTTPException(status_code=500, detail="SMTP not configured")
 
-        iterations = int(iters)
-        salt = _b64url_decode(salt_b64)
-        expected = _b64url_decode(hash_b64)
+    msg = EmailMessage()
+    msg["Subject"] = "AURA Admin Login Code"
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.set_content(
+        f"Your AURA admin login code is: {code}\n\n"
+        f"This code expires in {max(1, ADMIN_OTP_TTL_SECONDS//60)} minutes.\n"
+        f"If you did not request this, ignore this email."
+    )
 
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-        return hmac.compare_digest(dk, expected)
-    except Exception:
-        return False
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
 
-
-def load_admins() -> Dict[str, str]:
-    """
-    Returns dict: { email_lower: password_hash_string }
-    """
+def _load_admins() -> Dict[str, str]:
     if not ADMIN_USERS_PATH.exists():
-        raise HTTPException(status_code=500, detail="admin_users.json missing")
+        raise HTTPException(status_code=500, detail="Server missing admin store")
 
     with open(ADMIN_USERS_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -86,87 +104,89 @@ def load_admins() -> Dict[str, str]:
             out[email] = ph
     return out
 
-
-def send_otp_email(to_email: str, code: str):
-    if not SMTP_HOST or not SMTP_USER or not SMTP_PASS:
-        raise HTTPException(status_code=500, detail="SMTP not configured (set SMTP_* in .env)")
-
-    msg = EmailMessage()
-    msg["Subject"] = "AURA Admin Login Code"
-    msg["From"] = SMTP_FROM
-    msg["To"] = to_email
-    msg.set_content(
-        f"Your AURA admin login code is: {code}\n\n"
-        f"This code expires in 5 minutes.\n"
-        f"If you did not request this, ignore this email."
-    )
-
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-
-
-OTP_STORE: Dict[str, Dict[str, Any]] = {}  # email -> {code, expires, attempts}
-
-
 @router.post("/login")
 async def login(data: AdminLoginRequest, request: Request):
+    # Keep this if you want admin only from specific IPs (optional)
     require_ip_allowlist(request)
+
+    ip = _client_ip(request)
+    _rate_limit_or_429(ip)
 
     email = (data.email or "").strip().lower()
     password = (data.password or "").strip()
 
-    admins = load_admins()
+    # Generic error prevents user enumeration
+    invalid = HTTPException(status_code=401, detail="Invalid credentials")
 
-    if email not in admins:
-        raise HTTPException(status_code=403, detail="Not an admin email")
+    if not email or "@" not in email or not password:
+        raise invalid
 
-    if not verify_password(password, admins[email]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    admins = _load_admins()
+    stored_hash = admins.get(email)
+    if not stored_hash:
+        raise invalid
+
+    if not verify_pbkdf2_password(password, stored_hash):
+        raise invalid
 
     code = f"{random.randint(100000, 999999)}"
-    expires = int(time.time()) + 300
+    otp_store.set(email=email, code=code, ttl_seconds=ADMIN_OTP_TTL_SECONDS)
+    _send_otp_email(email, code)
 
-    OTP_STORE[email] = {"code": code, "expires": expires, "attempts": 0}
-    send_otp_email(email, code)
-
-    return {"message": "OTP sent to email", "otp_expires_in": 300}
-
+    return {"message": "OTP sent", "otp_expires_in": ADMIN_OTP_TTL_SECONDS}
 
 @router.post("/verify")
-async def verify(data: AdminVerifyRequest, request: Request):
+async def verify(data: AdminVerifyRequest, request: Request, response: Response):
     require_ip_allowlist(request)
 
     email = (data.email or "").strip().lower()
     otp = (data.otp or "").strip()
 
-    rec = OTP_STORE.get(email)
+    invalid = HTTPException(status_code=401, detail="Invalid code")
+
+    rec = otp_store.get(email)
     if not rec:
-        raise HTTPException(status_code=400, detail="No OTP pending")
+        raise invalid
 
-    if time.time() > rec["expires"]:
-        OTP_STORE.pop(email, None)
-        raise HTTPException(status_code=401, detail="OTP expired")
+    # expires handled in store.get() (redis TTL / mem check), but keep safe check:
+    if int(rec.get("expires", 0)) and time.time() > int(rec["expires"]):
+        otp_store.delete(email)
+        raise invalid
 
-    rec["attempts"] += 1
-    if rec["attempts"] > 5:
-        OTP_STORE.pop(email, None)
+    attempts = otp_store.incr_attempts(email)
+    if attempts > ADMIN_MAX_OTP_ATTEMPTS:
+        otp_store.delete(email)
         raise HTTPException(status_code=429, detail="Too many attempts")
 
-    if otp != rec["code"]:
-        raise HTTPException(status_code=401, detail="Invalid OTP")
+    if hash_code(otp) != rec.get("otp_hash"):
+        raise invalid
 
-    OTP_STORE.pop(email, None)
+    otp_store.delete(email)
 
-    return mint_app_token(email=email, role="admin")
+    result = mint_app_token(email=email, role="admin")
 
+    # ✅ Set secure httpOnly cookie
+    response.set_cookie(
+        key="aura_token",
+        value=result["token"],
+        httponly=True,
+        secure=True,       # requires HTTPS (Azure provides)
+        samesite="lax",
+        max_age=result["expires_in"],
+    )
+
+    # Return user info only (token stays in cookie)
+    return {"user": result["user"], "expires_in": result["expires_in"]}
 
 @router.get("/me")
 def me(request: Request):
     require_ip_allowlist(request)
-    # If you want: verify token and return user info
-    # but you already have require_auth in security.py; use that if needed
     from security import require_auth
     payload = require_auth(request)
     return {"user": {"email": payload.get("sub"), "role": payload.get("role")}, "exp": payload.get("exp")}
+
+@router.post("/logout")
+def logout(response: Response):
+    # Clears cookie
+    response.delete_cookie("aura_token")
+    return {"ok": True}
