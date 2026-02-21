@@ -1,40 +1,166 @@
+:root {
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 72px;
+}
+
 .sidebar {
-  width: 240px;
-  min-height: 100vh;      /* <- makes it full height */
+  width: var(--sidebar-width);
+  height: 100vh;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
-  padding: 18px;
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--card-border);
+  transition: width 0.2s ease, padding 0.2s ease;
+  overflow: hidden;
+}
 
-  /* optional: keep it visible while scrolling */
-  position: sticky;
-  top: 0;
-  align-self: flex-start;
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed-width);
+  padding: 12px 10px;
+}
+
+/* ===== Header ===== */
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.sidebar-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
 .sidebar-title {
-  margin: 0 0 16px 0;
+  margin: 0;
   font-size: 18px;
-  font-weight: 800;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: var(--sidebar-text);
+  line-height: 1.1;
+}
+
+.sidebar-subtitle {
+  margin: 0;
+  font-size: 11px;
+  opacity: 0.7;
   color: var(--sidebar-text);
 }
 
+/* Toggle = small, not a giant pill */
+.sidebar-toggle {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--sidebar-text);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background-color 0.18s ease, transform 0.18s ease;
+  flex: 0 0 auto;
+}
+
+.sidebar-toggle:hover {
+  background: var(--sidebar-hover);
+  transform: translateY(-1px);
+}
+
+/* Hide brand when collapsed (no weird A) */
+.sidebar.collapsed .sidebar-brand {
+  display: none;
+}
+
+/* ===== Nav ===== */
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
+  flex: 1;
 }
 
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sidebar-section-title {
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  opacity: 0.6;
+  margin: 10px 10px 4px;
+}
+
+.sidebar.collapsed .sidebar-section-title {
+  display: none;
+}
+
+/* Link base */
 .sidebar-link {
-  color: var(--sidebar-text);
   text-decoration: none;
+  color: var(--sidebar-text);
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+  transition: background-color 0.18s ease, transform 0.18s ease;
 }
 
 .sidebar-link:hover {
   background: var(--sidebar-hover);
+  transform: translateY(-1px);
 }
 
+/* Active = solid pill, no weird outline */
 .sidebar-link.active {
   background: var(--sidebar-active);
+  color: var(--sidebar-text);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+/* Admin active slightly warmer */
+.admin-link.active {
+  background: rgba(255, 107, 107, 0.16);
+  box-shadow: 0 10px 24px rgba(255, 107, 107, 0.12);
+}
+
+/* Collapsed: icon-only center */
+.sidebar.collapsed .sidebar-link {
+  justify-content: center;
+  padding: 10px;
+}
+
+.sidebar-link-text {
+  display: inline-block;
+}
+
+.sidebar.collapsed .sidebar-link-text {
+  display: none;
+}
+
+/* Bottom row (no box) */
+.sidebar-bottom {
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+/* Optional: subtle divider before bottom */
+.sidebar-bottom::before {
+  content: "";
+  display: block;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0 8px 10px;
 }

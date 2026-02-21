@@ -1,6 +1,13 @@
 /* src/styles/layout.css */
 
-html, body, #root {
+:root {
+  /* Sidebar reads this too (Sidebar.tsx sets it dynamically) */
+  --sidebar-width: 240px;
+}
+
+html,
+body,
+#root {
   height: 100%;
 }
 
@@ -12,15 +19,25 @@ html, body, #root {
   color: var(--text);
 }
 
+/* Sidebar sits on the left. This area is the rest of the screen. */
 .layout-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* keeps content flush with sidebar and prevents overlap glitches */
+  width: calc(100% - var(--sidebar-width));
 }
 
 .layout-main {
   flex: 1;
   padding: 24px;
   min-width: 0;
+}
+
+/* optional: nicer padding on small screens */
+@media (max-width: 640px) {
+  .layout-main {
+    padding: 16px;
+  }
 }
