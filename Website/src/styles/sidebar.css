@@ -5,7 +5,11 @@
 
 .sidebar {
   width: var(--sidebar-width);
-  height: 100vh;
+
+  /* was height: 100vh; */
+  min-height: 100vh;   /* at least viewport */
+  height: auto;        /* allow it to grow with content */
+
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
   padding: 14px 12px;
@@ -14,6 +18,7 @@
   border-right: 1px solid var(--card-border);
   transition: width 0.2s ease, padding 0.2s ease;
   overflow: hidden;
+  align-self: stretch; /* important inside flex row */
 }
 
 .sidebar.collapsed {
