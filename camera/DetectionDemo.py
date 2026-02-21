@@ -1,6 +1,7 @@
 import cv2
 from ultralytics import YOLO
 
+#camera
 #REPLACE WITH SAM at earliest convenience
 model = YOLO("yolov11s-face.pt")
 cap = cv2.VideoCapture(0)
