@@ -77,19 +77,26 @@ async def build_db():
 
 @app.post("/api/deploy")
 async def deploy_to_nano():
-    zip_path = "chroma_deploy.zip"
-    if not os.path.exists(CHROMA_DIR):
-        raise HTTPException(status_code=400, detail="No database to deploy")
-        
-    shutil.make_archive("chroma_deploy", 'zip', CHROMA_DIR)
+    zip_path = "storage_deploy"
+    if not os.path.exists(CHROMA_DIR) or not os.path.exists(GRAPH_FILE):
+        raise HTTPException(status_code=400, detail="Incomplete database to deploy")
+    
+    # Zip the entire STORAGE_DIR (which contains both chroma/ and the graphml file)
+    # Exclude sessions to prevent overwriting Nano logs
+    temp_deploy_dir = os.path.join(BASE_DIR, "temp_deploy")
+    os.makedirs(temp_deploy_dir, exist_ok=True)
+    shutil.copytree(CHROMA_DIR, os.path.join(temp_deploy_dir, "chroma"))
+    shutil.copy2(GRAPH_FILE, temp_deploy_dir)
+    
+    shutil.make_archive(zip_path, 'zip', temp_deploy_dir)
+    shutil.rmtree(temp_deploy_dir)
     
     try:
-        with open(zip_path, "rb") as f:
-            # Pushes the zipped database to the Nano's FastAPI endpoint
+        with open(zip_path + ".zip", "rb") as f:
             response = requests.post(f"{NANO_IP}/api/sync-db", files={"file": f}, timeout=600)
         return {"status": "Deploy successful", "nano_response": response.json()}
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to contact Nano at {NANO_IP}: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Failed to contact Nano: {str(e)}")
 
 @app.get("/api/nano-status")
 async def check_nano():

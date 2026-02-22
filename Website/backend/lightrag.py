@@ -1,67 +1,50 @@
-"""
-Retrieval augmented Generation system based on LightRAG paper:
-https://arxiv.org/abs/2410.05779
-
-Provides:
-- LightRAG Class
-
-This is a fairly simplified implementation of the above research paper + github focusing on
-Enhancing retrieval via scoring, simple reranking based on relevance scoring, Evidence-based answer
-generation, & overlap scoring for transparency.
-"""
-
 import json
+import re
+import os
 import networkx as nx
+from networkx.algorithms.community import louvain_communities
 from typing import List, Dict, Any
 from langchain_core.documents import Document
 
 class LightRAG:
-    def __init__(self, llm, vector_db):
+    def __init__(self, llm, vector_db, graph_file_path: str):
         self.llm = llm
         self.vector_db = vector_db
-        self.graph_db = nx.Graph()
+        self.graph_file_path = graph_file_path
+        
+        # Load existing graph if it exists, otherwise create a new one
+        if os.path.exists(self.graph_file_path):
+            self.graph_db = nx.read_graphml(self.graph_file_path)
+        else:
+            self.graph_db = nx.Graph()
 
     # ==========================================
     # PHASE 1: GRAPH-BASED TEXT INDEXING
     # ==========================================
     def build_index(self, chunks: List[Document]):
-        """
-        Processes text chunks into a searchable graph and vector structure.
-        """
+        """Processes text chunks into a searchable graph and vector structure."""
+        print(f"Extracting entities and relations from {len(chunks)} chunks...")
         for chunk in chunks:
-            # 1. Extract Entities and Relationships using LLM
             raw_graph_data = self._extract_entities_and_relations(chunk.page_content)
-            
-            # 2. Parse the LLM output and insert into GraphDB
             self._parse_and_insert_graph_data(raw_graph_data)
             
-        # 3. Vector Indexing: Profile the graph elements into the Vector DB
-        self._profile_and_embed_graph()
+        print("Resolving duplicate entities...")
+        self._resolve_entities()
+            
+        print("Detecting communities and generating summaries...")
+        self._build_and_summarize_communities()
+        
+        # Save the graph to disk so it can be deployed to the Nano
+        nx.write_graphml(self.graph_db, self.graph_file_path)
+        print("Graph indexing complete and saved.")
 
     def _extract_entities_and_relations(self, text_chunk: str) -> str:
-        """Prompts the LLM to find entities (nodes) and relations (edges)."""
         prompt = f"""
-        -Goal-
-        Given a text document that is potentially relevant to this activity and a list of entity types, identify all entities of those types from the text and all relationships among the identified entities.
+        Extract entities and relationships from the text.
+        1. Entities: Format as ("entity"|"<Name>"|"<Type>"|"<Description>")
+        2. Relationships: Format as ("relationship"|"<Source>"|"<Target>"|"<Description>"|"<Keywords>")
+        Return as a single list delimited by "##".
         
-        -Steps-
-        1. Identify all entities. For each identified entity, extract the following information:
-        - entity_name: Name of the entity, capitalized
-        - entity_type: One of the following types: [organization, person, geo, event, concept]
-        - entity_description: Comprehensive description of the entity's attributes and activities
-        Format each entity as ("entity"|"<entity_name>"|"<entity_type>"|"<entity_description>")
-        
-        2. From the entities identified in step 1, identify all pairs of (source_entity, target_entity) that are *clearly related* to each other.
-        For each pair of related entities, extract the following information:
-        - source_entity: name of the source entity, as identified in step 1
-        - target_entity: name of the target entity, as identified in step 1
-        - relationship_description: explanation as to why you think the source entity and the target entity are related to each other
-        - relationship_keywords: one or more high-level key words that summarize the overarching nature of the relationship
-        Format each relationship as ("relationship"|"<source_entity>"|"<target_entity>"|"<relationship_description>"|"<relationship_keywords>")
-        
-        3. Return output in English as a single list of all the entities and relationships identified in steps 1 and 2. Use "##" as the list delimiter.
-        
-        -Real Data-
         Text: {text_chunk}
         Output:
         """
@@ -69,119 +52,124 @@ class LightRAG:
         return response.content if hasattr(response, "content") else str(response)
 
     def _parse_and_insert_graph_data(self, raw_data: str):
-        """Parses the ## delimited output and populates the NetworkX graph."""
-        items = raw_data.split("##")
-        for item in items:
-            item = item.strip().strip('()')
-            parts = [p.strip('"') for p in item.split('"|"')]
-            
-            if len(parts) > 0 and parts[0] == "entity" and len(parts) == 4:
-                _, name, e_type, desc = parts
-                # Deduplication happens naturally in NetworkX if the node name already exists
-                if self.graph_db.has_node(name):
-                    # Append new context to existing description
-                    self.graph_db.nodes[name]['description'] += f" {desc}"
-                else:
-                    self.graph_db.add_node(name, type=e_type, description=desc)
-                    
-            elif len(parts) > 0 and parts[0] == "relationship" and len(parts) == 5:
-                _, src, tgt, desc, keywords = parts
-                if self.graph_db.has_edge(src, tgt):
-                    self.graph_db[src][tgt]['description'] += f" {desc}"
-                else:
-                    self.graph_db.add_edge(src, tgt, description=desc, keywords=keywords)
+        entity_pattern = re.compile(r'\(\s*"entity"\s*\|\s*"([^"]+)"\s*\|\s*"([^"]+)"\s*\|\s*"([^"]+)"\s*\)')
+        relation_pattern = re.compile(r'\(\s*"relationship"\s*\|\s*"([^"]+)"\s*\|\s*"([^"]+)"\s*\|\s*"([^"]+)"\s*\|\s*"([^"]+)"\s*\)')
+        
+        for match in entity_pattern.finditer(raw_data):
+            name, e_type, desc = match.groups()
+            name = name.strip()
+            if self.graph_db.has_node(name):
+                self.graph_db.nodes[name]['description'] = str(self.graph_db.nodes[name].get('description', '')) + f" {desc}"
+            else:
+                self.graph_db.add_node(name, type=e_type, description=desc)
+                
+        for match in relation_pattern.finditer(raw_data):
+            src, tgt, desc, keywords = match.groups()
+            src, tgt = src.strip(), tgt.strip()
+            if self.graph_db.has_edge(src, tgt):
+                self.graph_db[src][tgt]['description'] = str(self.graph_db[src][tgt].get('description', '')) + f" {desc}"
+            else:
+                self.graph_db.add_edge(src, tgt, description=desc, keywords=keywords)
 
-    def _profile_and_embed_graph(self):
-        """Generates key-value pairs for the graph and pushes to ChromaDB."""
-        texts = []
+    def _resolve_entities(self):
+        """Uses the LLM to find and merge semantically identical entities (e.g. 'Apple' and 'Apple Inc.')."""
+        nodes = list(self.graph_db.nodes())
+        if len(nodes) < 2: return
+        
+        # Pass nodes in batches to avoid overwhelming the LLM's context window
+        batch_size = 50
+        for i in range(0, len(nodes), batch_size):
+            batch = nodes[i:i+batch_size]
+            prompt = f"""
+            Identify entities that refer to the exact same concept or organization and should be merged.
+            Output ONLY a strict JSON list of lists. Example: [["Apple", "Apple Inc."], ["Jetson Nano", "Nvidia Jetson Nano"]]
+            Entities: {batch}
+            Output:
+            """
+            response = self.llm.invoke(prompt)
+            content = response.content if hasattr(response, "content") else str(response)
+            
+            try:
+                content = content.replace("```json", "").replace("```", "").strip()
+                merge_groups = json.loads(content)
+                for group in merge_groups:
+                    if len(group) > 1:
+                        primary = group[0]
+                        for secondary in group[1:]:
+                            if self.graph_db.has_node(primary) and self.graph_db.has_node(secondary):
+                                # Merge secondary into primary
+                                self.graph_db = nx.contracted_nodes(self.graph_db, primary, secondary, self_loops=False)
+            except Exception as e:
+                print(f"Skipping entity resolution batch due to parse error.")
+
+    def _build_and_summarize_communities(self):
+        """Groups the graph into communities and generates summaries for ChromaDB."""
+        if len(self.graph_db.nodes()) == 0: return
+        
+        # 1. Detect communities using Louvain algorithm
+        communities = louvain_communities(self.graph_db)
+        
+        summaries = []
         metadatas = []
         
-        # Profile Nodes
-        for node, data in self.graph_db.nodes(data=True):
-            texts.append(f"Entity: {node}. Type: {data.get('type')}. Description: {data.get('description')}")
-            metadatas.append({"type": "entity", "key": node})
+        # 2. Generate a summary for each community
+        for i, community_nodes in enumerate(communities):
+            subgraph = self.graph_db.subgraph(community_nodes)
             
-        # Profile Edges
-        for u, v, data in self.graph_db.edges(data=True):
-            texts.append(f"Relationship between {u} and {v}. Keywords: {data.get('keywords')}. Description: {data.get('description')}")
-            metadatas.append({"type": "relation", "key": f"{u}-{v}"})
+            # Compile raw context for the LLM
+            raw_context = []
+            for node, data in subgraph.nodes(data=True):
+                raw_context.append(f"Entity: {node} ({data.get('type', '')}) - {data.get('description', '')}")
+            for u, v, data in subgraph.edges(data=True):
+                raw_context.append(f"Relation: {u} -> {v} ({data.get('keywords', '')}) - {data.get('description', '')}")
+                
+            summary_prompt = f"Summarize the following related entities and their relationships into a cohesive, highly detailed overview:\n{chr(10).join(raw_context)}"
+            response = self.llm.invoke(summary_prompt)
+            summary = response.content if hasattr(response, "content") else str(response)
             
-        if texts:
-            self.vector_db.add_texts(texts=texts, metadatas=metadatas)
+            summaries.append(summary)
+            metadatas.append({"type": "community_summary", "community_id": str(i)})
+            
+        # 3. Embed the SUMMARIES into ChromaDB
+        if summaries:
+            self.vector_db.add_texts(texts=summaries, metadatas=metadatas)
 
     # ==========================================
-    # PHASE 2: DUAL-LEVEL RETRIEVAL PARADIGM
+    # PHASE 2: DUAL-LEVEL RETRIEVAL & GENERATION
     # ==========================================
     def retrieve(self, query: str) -> str:
-        """Retrieves context using local and global keys, plus graph neighbors."""
-        
-        # 1. Keyword Extraction
         keywords = self._extract_query_keywords(query)
-        local_keys = keywords.get("low_level_keywords", [])
-        global_keys = keywords.get("high_level_keywords", [])
+        all_keys = keywords.get("low_level_keywords", []) + keywords.get("high_level_keywords", [])
         
-        retrieved_texts = []
-        retrieved_nodes = set()
-        
-        # 2. Match local keys (Entities) and global keys (Relationships) in Vector DB
-        for key in local_keys + global_keys:
+        retrieved_summaries = set()
+        for key in all_keys:
+            # We search ChromaDB for the embedded community summaries
             docs = self.vector_db.similarity_search(key, k=2)
             for d in docs:
-                retrieved_texts.append(d.page_content)
-                if d.metadata.get("type") == "entity":
-                    retrieved_nodes.add(d.metadata.get("key"))
-                elif d.metadata.get("type") == "relation":
-                    u, v = d.metadata.get("key", "-").split("-", 1)
-                    retrieved_nodes.update([u, v])
-                    
-        # 3. High-Order Relatedness (Graph DB 1-hop neighbors)
-        neighbor_texts = []
-        for node in retrieved_nodes:
-            if self.graph_db.has_node(node):
-                for neighbor in self.graph_db.neighbors(node):
-                    edge_data = self.graph_db[node][neighbor]
-                    neighbor_texts.append(
-                        f"Related Entity: {neighbor}. Connection: {edge_data.get('description')}"
-                    )
-                    
-        # Combine all context
-        full_context = "\n".join(list(set(retrieved_texts + neighbor_texts)))
-        return full_context
+                retrieved_summaries.add(d.page_content)
+                
+        return "\n---\n".join(list(retrieved_summaries))
 
     def _extract_query_keywords(self, query: str) -> dict:
-        """Extracts local and global keywords using the LLM."""
         prompt = f"""
-        -Role-
-        You are a helpful assistant tasked with identifying both high-level and low-level keywords in the user's query.
-        
-        -Goal-
-        Given the query, list both high-level and low-level keywords. High-level keywords focus on overarching concepts or themes, while low-level keywords focus on specific entities, details, or concrete terms.
-        
-        Output the keywords in strict JSON format with exactly two keys: "high_level_keywords" (list of strings) and "low_level_keywords" (list of strings).
-        
-        -Real Data-
+        Identify high-level (broad themes) and low-level (specific entities) keywords in the query.
+        Output ONLY strict JSON with exactly two keys: "high_level_keywords" and "low_level_keywords".
         Query: {query}
         Output:
         """
         response = self.llm.invoke(prompt)
         content = response.content if hasattr(response, "content") else str(response)
-        
         try:
-            # Clean up potential markdown formatting from local LLMs
             content = content.replace("```json", "").replace("```", "").strip()
             return json.loads(content)
         except json.JSONDecodeError:
-            print("Failed to parse JSON from LLM keyword extraction.")
             return {"high_level_keywords": [query], "low_level_keywords": []}
 
-    # ==========================================
-    # PHASE 3: ANSWER GENERATION
-    # ==========================================
     def generate(self, query: str) -> Dict[str, Any]:
-        """Generates the final answer using the retrieved graph context."""
         context = self.retrieve(query)
         
-        prompt = f"""Based on the following retrieved entities, relationships, and context, answer the user's query comprehensively.
+        prompt = f"""
+        Based on the following retrieved knowledge graph summaries, answer the user's query directly and comprehensively. Show clear calculation steps if math is involved.
         
         Context:
         {context}
@@ -190,8 +178,7 @@ class LightRAG:
         Answer:"""
         
         response = self.llm.invoke(prompt)
-        
         return {
             "answer": response.content if hasattr(response, "content") else str(response),
-            "context_used": context
+            "sources": ["Knowledge Graph Community Summaries"]
         }
