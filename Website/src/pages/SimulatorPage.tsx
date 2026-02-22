@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useAuth } from "../services/authService";
 
 type ChatMsg = {
   role: "user" | "ai" | "error";
@@ -14,6 +15,8 @@ type ChatResponse = {
 };
 
 export default function SimulatorPage() {
+  const { token } = useAuth();
+
   const [query, setQuery] = useState("");
   const [history, setHistory] = useState<ChatMsg[]>([]);
   const [loading, setLoading] = useState(false);
@@ -27,9 +30,21 @@ export default function SimulatorPage() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  // Use same base logic as DatabasePage to avoid mismatch
   const API_URL = useMemo(() => {
-    return (import.meta.env.VITE_API_URL as string | undefined)?.trim() || "http://localhost:9000";
+    return (
+      (import.meta.env.VITE_AUTH_API_BASE as string | undefined)?.trim() ||
+      (import.meta.env.VITE_API_URL as string | undefined)?.trim() ||
+      "http://127.0.0.1:9000"
+    );
   }, []);
+
+  // ✅ auth headers (same pattern as DatabasePage)
+  const authHeaders = useMemo(() => {
+    const h = new Headers();
+    if (token) h.set("Authorization", `Bearer ${token}`);
+    return h;
+  }, [token]);
 
   useEffect(() => {
     return () => abortRef.current?.abort();
@@ -83,7 +98,7 @@ export default function SimulatorPage() {
 
     const load = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/databases`);
+        const res = await fetch(`${API_URL}/api/databases`, { headers: authHeaders });
         const data = await res.json().catch(() => null);
         const list = Array.isArray(data?.databases) ? (data.databases as string[]) : [];
         if (cancelled) return;
@@ -130,9 +145,11 @@ export default function SimulatorPage() {
     setLoading(true);
 
     try {
+      const headers = new Headers(authHeaders);
+      headers.set("Content-Type", "application/json");
       const res = await fetch(`${API_URL}/api/databases/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ db: activeDb, query: q }),
         signal: controller.signal,
       });

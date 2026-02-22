@@ -327,11 +327,16 @@ async def build_database(req: BuildDBRequest):
 
 @router.post("/api/databases/chat")
 async def database_chat(req: ChatRequest):
-    cfg = _load_db_config(req.db)
-    rag = LightRAG(
-        working_dir=_db_workdir(req.db),
-        llm_model_name=str(cfg.get("llm_model") or DEFAULT_LLM),
-        embed_model_name=str(cfg.get("embed_model") or DEFAULT_EMBED),
-        ollama_base_url=str(cfg.get("ollama_url") or OLLAMA_URL),
-    )
-    return await rag.aquery(req.query, param=QueryParam(mode="hybrid", top_k=8))
+    try:
+        cfg = _load_db_config(req.db)
+        rag = LightRAG(
+            working_dir=_db_workdir(req.db),
+            llm_model_name=str(cfg.get("llm_model") or DEFAULT_LLM),
+            embed_model_name=str(cfg.get("embed_model") or DEFAULT_EMBED),
+            ollama_base_url=str(cfg.get("ollama_url") or OLLAMA_URL),
+        )
+        return await rag.aquery(req.query, param=QueryParam(mode="hybrid", top_k=5))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

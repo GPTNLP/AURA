@@ -35,7 +35,7 @@ import urllib.request
 @dataclass
 class QueryParam:
     mode: str = "hybrid"
-    top_k: int = 8
+    top_k: int = 5
 
 
 # -------------------------
@@ -138,7 +138,7 @@ class OllamaClient:
             raise RuntimeError("Ollama embeddings returned no embedding vector.")
         return np.array(emb, dtype=np.float32)
 
-    async def generate(self, prompt: str, system: str = "", timeout_s: float = 45.0) -> str:
+    async def generate(self, prompt: str, system: str = "", timeout_s: float = 180.0) -> str:
         payload = {
             "model": self.llm_model,
             "prompt": prompt,
@@ -203,7 +203,7 @@ class LightRAG:
     
 
     async def ainsert(self, text: str, meta: Optional[Dict[str, Any]] = None):
-        # DON'T save on every chunk (Windows file-lock hell)
+        # mark dirty; save later via flush()
         self._dirty = True
         meta = meta or {}
 
@@ -216,8 +216,6 @@ class LightRAG:
         }
         self._rows.append(row)
         self._emb_cache.append(emb.astype(np.float32))
-
-        _save_json(self.vdb_path, self._rows)
 
     def flush(self):
         if getattr(self, "_dirty", False):
@@ -259,6 +257,12 @@ class LightRAG:
                 sources.append(src)
 
         context = "\n\n---\n\n".join(ctx_parts)
+
+        # Prevent massive prompts that make /api/generate slow/hang
+        MAX_CTX_CHARS = 12000
+        if len(context) > MAX_CTX_CHARS:
+            context = context[:MAX_CTX_CHARS] + "\n\n[...context truncated...]"
+
         system = (
             "You are AURA. Answer ONLY using the provided context. "
             "If the context doesn't contain the answer, say you don't have enough information."

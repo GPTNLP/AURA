@@ -78,7 +78,7 @@ export default function Sidebar() {
           </NavLink>
 
           <NavLink to="/files" className={linkClass}>
-            <span className="sidebar-link-text">Files</span>
+            <span className="sidebar-link-text">Database</span>
           </NavLink>
         </div>
 

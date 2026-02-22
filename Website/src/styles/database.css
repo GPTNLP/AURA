@@ -1,0 +1,491 @@
+/* Database Page Layout */
+.db-grid {
+  display: grid;
+  grid-template-columns: 320px minmax(420px, 1.35fr) minmax(320px, 0.9fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .db-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.db-panel {
+  min-height: 720px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* IMPORTANT: prevents overflow in grid columns */
+}
+
+.db-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.db-panel-title {
+  font-weight: 900;
+  font-size: 14px;
+}
+
+.db-panel-sub {
+  font-size: 12px;
+  color: var(--muted-text);
+  margin-top: 4px;
+}
+
+.db-role-pill {
+  margin-left: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 85%, var(--accent-soft));
+  color: var(--muted-text);
+  font-weight: 900;
+}
+
+.db-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text);
+  outline: none;
+  font-weight: 800;
+  min-width: 0;
+}
+
+.db-mini {
+  font-size: 12px;
+  color: var(--muted-text);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.db-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.db-wrap {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.db-scroll {
+  margin-top: 12px;
+  overflow: auto;
+  padding-right: 4px;
+  max-height: 640px;
+}
+
+/* Search row */
+.db-search {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Tree */
+.db-tree-rowwrap {
+  margin-top: 8px;
+}
+
+.db-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.db-tree-row.is-selected,
+.db-item.is-selected {
+  background: color-mix(in srgb, var(--accent) 10%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--card-border));
+}
+
+.db-tree-toggle {
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-weight: 900;
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 80%, var(--accent-soft));
+  color: var(--text);
+  cursor: pointer;
+}
+
+.db-tree-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.db-tree-name {
+  font-weight: 900;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.db-tree-path {
+  font-size: 12px;
+  color: var(--muted-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Include checkbox: always visible */
+.db-tree-include {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted-text);
+  font-weight: 900;
+  user-select: none;
+
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.db-tree-row:hover .db-tree-include,
+.db-tree-row.is-selected .db-tree-include {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.db-tree-children {
+  margin-left: 22px;
+  margin-top: 8px;
+}
+
+/* Breadcrumbs */
+.db-breadcrumb-row {
+  margin-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.db-breadcrumbs {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.db-crumb {
+  background: transparent;
+  border: none;
+  color: var(--muted-text);
+  font-weight: 900;
+  cursor: pointer;
+  padding: 6px 6px;
+  border-radius: 10px;
+}
+
+.db-crumb:hover {
+  background: color-mix(in srgb, var(--card-bg) 80%, var(--accent-soft));
+}
+
+.db-crumb-sep {
+  margin-left: 6px;
+  opacity: 0.6;
+}
+
+/* Upload dropzone */
+.db-dropzone {
+  margin-top: 12px;
+  border: 1px dashed color-mix(in srgb, var(--card-border) 70%, var(--accent-soft));
+  background: color-mix(in srgb, var(--card-bg) 88%, var(--accent-soft));
+  border-radius: 14px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.db-dropzone.is-busy {
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.db-dropzone-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.db-drop-left {
+  min-width: 0;
+}
+
+.db-drop-title {
+  font-weight: 900;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 520px;
+}
+
+.db-drop-sub {
+  font-size: 12px;
+  color: var(--muted-text);
+  margin-top: 4px;
+}
+
+.db-drop-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.db-hidden-input {
+  display: none;
+}
+
+.db-filechips {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.db-chip {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  font-weight: 800;
+  font-size: 12px;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-chip-muted {
+  color: var(--muted-text);
+}
+
+.db-link {
+  background: transparent;
+  border: none;
+  color: var(--muted-text);
+  font-weight: 900;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 10px;
+}
+
+.db-link:hover {
+  background: color-mix(in srgb, var(--card-bg) 80%, var(--accent-soft));
+}
+
+/* Boxes */
+.db-two {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 1180px) {
+  .db-two {
+    grid-template-columns: 1fr;
+  }
+}
+
+.db-box {
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--card-bg) 92%, var(--accent-soft));
+  min-width: 0;
+}
+
+.db-box-title {
+  font-weight: 900;
+  font-size: 12px;
+  color: var(--muted-text);
+  margin-bottom: 8px;
+}
+
+.db-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Contents list */
+.db-contents-head {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.db-contents {
+  margin-top: 10px;
+  max-height: 360px;
+}
+
+/* Item rows (fix overflow hard) */
+.db-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  cursor: pointer;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.db-item-ic {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 80%, var(--accent-soft));
+  flex: 0 0 auto;
+}
+
+.db-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.db-item-name {
+  font-weight: 900;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-item-path {
+  font-size: 12px;
+  color: var(--muted-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Stats */
+.db-stat {
+  font-size: 13px;
+  color: var(--muted-text);
+  margin-top: 6px;
+  min-width: 0;
+}
+
+/* Modal */
+.db-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+
+.db-modal {
+  width: min(560px, 95vw);
+  padding: 14px;
+  border-radius: 16px;
+}
+
+.db-modal-title {
+  font-weight: 900;
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.db-modal-path {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 85%, var(--accent-soft));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.db-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+/* Context menu */
+.db-ctx {
+  position: fixed;
+  z-index: 100;
+  width: 240px;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.20);
+  overflow: hidden;
+}
+
+.db-ctx-title {
+  padding: 10px 12px;
+  font-weight: 900;
+  font-size: 12px;
+  color: var(--muted-text);
+  border-bottom: 1px solid var(--card-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-ctx-item {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.db-ctx-item:hover {
+  background: color-mix(in srgb, var(--card-bg) 75%, var(--accent-soft));
+}
+
+.db-ctx-item.danger {
+  color: color-mix(in srgb, var(--text) 40%, #d11);
+}
+
+.db-ctx-sep {
+  height: 1px;
+  background: var(--card-border);
+}
