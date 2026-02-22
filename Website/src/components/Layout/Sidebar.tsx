@@ -63,7 +63,7 @@ export default function Sidebar() {
           {!collapsed && <span className="sidebar-section-title">AI System</span>}
 
           <NavLink to="/bot" className="sidebar-link">
-            <span className="sidebar-link-text">Bot</span>
+            <span className="sidebar-link-text">Simulator</span>
           </NavLink>
 
           <NavLink to="/files" className="sidebar-link">

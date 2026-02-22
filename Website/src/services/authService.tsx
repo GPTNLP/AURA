@@ -1,10 +1,9 @@
-// src/services/authService.tsx
 import { createContext, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 interface User {
   email: string;
-  role?: "admin" | "student";
+  role?: "admin";
 }
 
 interface AuthContextType {
@@ -14,11 +13,8 @@ interface AuthContextType {
   adminStartLogin: (email: string, password: string) => Promise<void>;
   adminVerifyOtp: (email: string, otp: string) => Promise<void>;
 
-  studentStart: (email: string) => Promise<void>;
-  studentVerify: (email: string, otp: string) => Promise<void>;
-
   refreshMe: () => Promise<void>;
-  logout: () => Promise<void>;
+  logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType>(null as any);
@@ -31,13 +27,14 @@ const API_BASE =
   import.meta.env.VITE_CAMERA_API_BASE ||
   "http://127.0.0.1:9000";
 
-function makeAuthHeaders(token: string | null): HeadersInit {
+function authHeaders(token: string | null): HeadersInit {
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(LS_TOKEN));
+
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem(LS_USER);
     return stored ? (JSON.parse(stored) as User) : null;
@@ -63,9 +60,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // try admin/me first
-    let res = await fetch(`${API_BASE}/auth/admin/me`, {
-      headers: makeAuthHeaders(token),
+    const res = await fetch(`${API_BASE}/auth/admin/me`, {
+      headers: authHeaders(token),
     });
 
     if (res.ok) {
@@ -75,19 +71,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // then student/me (if implemented)
-    res = await fetch(`${API_BASE}/auth/student/me`, {
-      headers: makeAuthHeaders(token),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      setUser(data.user);
-      localStorage.setItem(LS_USER, JSON.stringify(data.user));
-      return;
-    }
-
-    // token invalid/expired
     clearSession();
   };
 
@@ -98,10 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await fetch(`${API_BASE}/auth/admin/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: email.trim().toLowerCase(),
-        password,
-      }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
     });
 
     if (!res.ok) {
@@ -114,10 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await fetch(`${API_BASE}/auth/admin/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: email.trim().toLowerCase(),
-        otp: otp.trim(),
-      }),
+      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
     });
 
     if (!res.ok) {
@@ -125,7 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(msg || "Invalid OTP");
     }
 
-    const data = await res.json().catch(() => null);
+    const data = await res.json();
+
+    // Expect backend to return { token, user }
     if (!data?.token || !data?.user) {
       throw new Error("Server did not return a session token");
     }
@@ -133,57 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(data.token, data.user);
   };
 
-  // -----------------------
-  // Student OTP
-  // -----------------------
-  const studentStart = async (email: string) => {
-    const res = await fetch(`${API_BASE}/auth/student/start`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase() }),
-    });
-
-    if (!res.ok) {
-      const msg = await res.text();
-      throw new Error(msg || "Student OTP start failed");
-    }
-  };
-
-  const studentVerify = async (email: string, otp: string) => {
-    const res = await fetch(`${API_BASE}/auth/student/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: email.trim().toLowerCase(),
-        otp: otp.trim(),
-      }),
-    });
-
-    if (!res.ok) {
-      const msg = await res.text();
-      throw new Error(msg || "Invalid OTP");
-    }
-
-    const data = await res.json().catch(() => null);
-    if (!data?.token || !data?.user) {
-      throw new Error("Server did not return a session token");
-    }
-
-    setSession(data.token, data.user);
-  };
-
-  const logout = async () => {
-    // optional: call backend logout (clears cookie if you use it)
-    try {
-      await fetch(`${API_BASE}/auth/admin/logout`, { method: "POST" });
-    } catch {
-      // ignore
-    }
-    try {
-      await fetch(`${API_BASE}/auth/student/logout`, { method: "POST" });
-    } catch {
-      // ignore
-    }
+  const logout = () => {
     clearSession();
   };
 
@@ -193,8 +122,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token,
       adminStartLogin,
       adminVerifyOtp,
-      studentStart,
-      studentVerify,
       refreshMe,
       logout,
     }),

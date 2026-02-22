@@ -1,5 +1,5 @@
-import React from "react";
-import { Routes, Route, Navigate } from "react-router-dom";
+import React, { useEffect } from "react";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../services/authService";
 
 import LoginPage from "../pages/LoginPage";
@@ -15,37 +15,16 @@ import BotPage from "../pages/BotPage";
 import Layout from "../components/Layout/Layout";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { token } = useAuth();
-  if (!token) return <Navigate to="/login" replace />;
-  return <>{children}</>;
-}
+  const { token, refreshMe } = useAuth();
+  const location = useLocation();
 
-/**
- * role="student" means: student OR admin can access
- * role="admin" means: admin only
- */
-function RequireRole({
-  role,
-  children,
-}: {
-  role: "admin" | "student";
-  children: React.ReactNode;
-}) {
-  const { token, user } = useAuth();
+  // try to restore user if token exists
+  useEffect(() => {
+    if (token) refreshMe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
-  if (!token) return <Navigate to="/login" replace />;
-
-  const userRole = user?.role;
-
-  if (role === "student") {
-    if (userRole !== "student" && userRole !== "admin") {
-      return <Navigate to="/" replace />;
-    }
-    return <>{children}</>;
-  }
-
-  // admin-only
-  if (userRole !== "admin") return <Navigate to="/" replace />;
+  if (!token) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   return <>{children}</>;
 }
 
@@ -61,40 +40,15 @@ export default function AppRouter() {
           </RequireAuth>
         }
       >
-        {/* shared pages */}
         <Route index element={<DashboardPage />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="control" element={<ControlPage />} />
         <Route path="camera" element={<CameraPage />} />
         <Route path="settings" element={<SettingsPage />} />
 
-        {/* shared pages (student + admin) */}
-        <Route
-          path="files"
-          element={
-            <RequireRole role="student">
-              <FilesPage />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="bot"
-          element={
-            <RequireRole role="student">
-              <BotPage />
-            </RequireRole>
-          }
-        />
-
-        {/* admin-only */}
-        <Route
-          path="logs"
-          element={
-            <RequireRole role="admin">
-              <ChatLogsPage />
-            </RequireRole>
-          }
-        />
+        <Route path="files" element={<FilesPage />} />
+        <Route path="bot" element={<BotPage />} />
+        <Route path="logs" element={<ChatLogsPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
