@@ -1,27 +1,100 @@
-# Website/backend/lightrag_local.py
+# backend/lightrag_local.py
 """
-Local LightRAG-like system (simple + practical for your project)
+Lightweight persistent RAG store + Ollama client (no chroma/langchain)
 
-- Uses:
-  1) Chunking + embeddings into a tiny local vector store
-  2) Retrieval
-  3) Optional graph extraction later (you can keep your Phase 1 idea)
+- Stores chunks in: <working_dir>/vdb_chunks.json
+- Embeddings via Ollama: POST {ollama_base_url}/api/embeddings
+- Chat completion via Ollama: POST {ollama_base_url}/api/generate
 
-This version adds:
-- QueryParam (so simulator_api can pass mode)
-- aquery() method used by your API
+This matches database_api.py usage:
+- LightRAG(working_dir=..., llm_model_name=..., embed_model_name=..., ollama_base_url=...)
+- await ainsert(text, meta)
+- await aquery(query, param=QueryParam(...))
+- stats()
+- reset()
 """
 
+from __future__ import annotations
+
+import os
 import json
+import random
+import time
+import math
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import urllib.request
 
 
+# -------------------------
+# Query params
+# -------------------------
 @dataclass
 class QueryParam:
-    mode: str = "hybrid"  # placeholder for future
+    mode: str = "hybrid"
+    top_k: int = 8
+
+
+# -------------------------
+# Helpers
+# -------------------------
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _safe_mkdir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+
+def _load_json(path: str, default):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _save_json(path: str, obj):
+    """
+    Windows-safe JSON save.
+
+    - Writes to tmp file first
+    - Tries atomic replace
+    - If Windows locks the destination, retries
+    - If still locked, falls back to writing directly (non-atomic)
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+
+    data = json.dumps(obj, ensure_ascii=False, indent=2)
+
+    # write tmp
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(data)
+
+    # try atomic replace with retries (Windows lock issues)
+    for attempt in range(12):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            # someone is holding the destination file open
+            time.sleep(0.05 + random.random() * 0.15)
+
+    # last resort: write directly (non-atomic)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(data)
+    finally:
+        # cleanup tmp if it still exists
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
 
 
 def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
@@ -29,65 +102,169 @@ def _cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom)
 
 
-class SimpleVectorDB:
-    """
-    Very small local vector store:
-    - add_text(text, meta, embedding)
-    - search(query_embedding, k)
-    """
-    def __init__(self):
-        self._rows: List[Tuple[str, Dict[str, Any], np.ndarray]] = []
+# -------------------------
+# Ollama HTTP client (with timeouts)
+# -------------------------
+class OllamaClient:
+    def __init__(self, base_url: str, embed_model: str, llm_model: str):
+        self.base_url = (base_url or "http://127.0.0.1:11434").rstrip("/")
+        self.embed_model = embed_model
+        self.llm_model = llm_model
 
-    def add(self, text: str, meta: Dict[str, Any], emb: np.ndarray):
-        self._rows.append((text, meta, emb.astype(np.float32)))
+    def _post_json(self, path: str, payload: Dict[str, Any], timeout_s: float) -> Dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+            return json.loads(raw) if raw else {}
 
-    def search(self, q_emb: np.ndarray, k: int = 6) -> List[Dict[str, Any]]:
-        if not self._rows:
-            return []
-        scored = []
-        for text, meta, emb in self._rows:
-            scored.append((_cosine_sim(q_emb, emb), text, meta))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        out = []
-        for score, text, meta in scored[:k]:
-            out.append({"score": score, "text": text, "meta": meta})
-        return out
+    async def embed(self, text: str, timeout_s: float = 15.0) -> np.ndarray:
+        # Run blocking urllib in a thread so FastAPI doesn't freeze the event loop
+        payload = {"model": self.embed_model, "prompt": text}
+        try:
+            out = await asyncio.to_thread(self._post_json, "/api/embeddings", payload, timeout_s)
+        except Exception as e:
+            raise RuntimeError(
+                f"Ollama embeddings failed. Is Ollama running at {self.base_url}? ({e})"
+            )
+        emb = out.get("embedding")
+        if not isinstance(emb, list) or not emb:
+            raise RuntimeError("Ollama embeddings returned no embedding vector.")
+        return np.array(emb, dtype=np.float32)
+
+    async def generate(self, prompt: str, system: str = "", timeout_s: float = 45.0) -> str:
+        payload = {
+            "model": self.llm_model,
+            "prompt": prompt,
+            "system": system,
+            "stream": False,
+        }
+        try:
+            out = await asyncio.to_thread(self._post_json, "/api/generate", payload, timeout_s)
+        except Exception as e:
+            raise RuntimeError(
+                f"Ollama generate failed. Is Ollama running at {self.base_url}? ({e})"
+            )
+        txt = out.get("response")
+        if not isinstance(txt, str):
+            raise RuntimeError("Ollama generate returned no response text.")
+        return txt.strip()
 
 
+# -------------------------
+# LightRAG persistent store
+# -------------------------
 class LightRAG:
-    """
-    Minimal RAG wrapper that matches what the simulator needs:
-    - ainsert(text) : embed + store
-    - aquery(query) : retrieve top chunks + ask LLM
-    """
+    def __init__(
+        self,
+        working_dir: str,
+        llm_model_name: str,
+        embed_model_name: str,
+        ollama_base_url: str = "http://127.0.0.1:11434",
+    ):
+        self.working_dir = os.path.abspath(working_dir)
+        _safe_mkdir(self.working_dir)
 
-    def __init__(self, llm_client, embed_client, vector_db: Optional[SimpleVectorDB] = None):
-        self.llm = llm_client
-        self.embed = embed_client
-        self.vdb = vector_db or SimpleVectorDB()
-
-    async def ainsert(self, text: str, meta: Optional[Dict[str, Any]] = None):
-        meta = meta or {}
-        emb = await self.embed.embed(text)
-        self.vdb.add(text=text, meta=meta, emb=emb)
-
-    async def aquery(self, query: str, param: Optional[QueryParam] = None) -> Dict[str, Any]:
-        # embed query
-        q_emb = await self.embed.embed(query)
-
-        # retrieve
-        hits = self.vdb.search(q_emb, k=8)
-        context = "\n\n---\n\n".join([h["text"] for h in hits])
-
-        # ask LLM
-        answer = await self.llm.complete(
-            system="You are AURA. Answer using the provided context. If context is missing, say you don't have enough info.",
-            prompt=f"CONTEXT:\n{context}\n\nQUESTION:\n{query}\n\nANSWER:"
+        self.vdb_path = os.path.join(self.working_dir, "vdb_chunks.json")
+        self.client = OllamaClient(
+            base_url=ollama_base_url,
+            embed_model=embed_model_name,
+            llm_model=llm_model_name,
         )
 
+        # rows: [{"id":..., "text":..., "meta":..., "embedding":[...]}]
+        self._rows: List[Dict[str, Any]] = _load_json(self.vdb_path, default=[])
+
+        # cache numpy embeddings for fast search
+        self._emb_cache: List[np.ndarray] = []
+        for r in self._rows:
+            emb = r.get("embedding")
+            if isinstance(emb, list) and emb:
+                self._emb_cache.append(np.array(emb, dtype=np.float32))
+            else:
+                self._emb_cache.append(np.zeros((1,), dtype=np.float32))
+
+    def reset(self):
+        self._rows = []
+        self._emb_cache = []
+        _save_json(self.vdb_path, self._rows)
+
+    def stats(self) -> Dict[str, Any]:
+        return {
+            "chunk_count": len(self._rows),
+            "vdb_path": self.vdb_path,
+        }
+    
+
+    async def ainsert(self, text: str, meta: Optional[Dict[str, Any]] = None):
+        # DON'T save on every chunk (Windows file-lock hell)
+        self._dirty = True
+        meta = meta or {}
+
+        emb = await self.client.embed(text)
+        row = {
+            "id": f"chunk_{_now_ms()}_{len(self._rows)}",
+            "text": text,
+            "meta": meta,
+            "embedding": emb.astype(np.float32).tolist(),
+        }
+        self._rows.append(row)
+        self._emb_cache.append(emb.astype(np.float32))
+
+        _save_json(self.vdb_path, self._rows)
+
+    def flush(self):
+        if getattr(self, "_dirty", False):
+            _save_json(self.vdb_path, self._rows)
+            self._dirty = False
+            
+    async def aquery(self, query: str, param: Optional[QueryParam] = None) -> Dict[str, Any]:
+        param = param or QueryParam()
+        if not self._rows:
+            return {
+                "answer": "Database is empty. Build the database first.",
+                "sources": [],
+                "hits": [],
+            }
+
+        q_emb = await self.client.embed(query)
+
+        scored: List[Tuple[float, int]] = []
+        for i, emb in enumerate(self._emb_cache):
+            if emb.size < 8:
+                continue
+            scored.append((_cosine_sim(q_emb, emb), i))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = scored[: max(1, int(param.top_k))]
+
+        hits = []
         sources = []
-        for h in hits[:6]:
-            if isinstance(h.get("meta"), dict) and h["meta"].get("source"):
-                sources.append(str(h["meta"]["source"]))
+        ctx_parts = []
+
+        for score, idx in top:
+            r = self._rows[idx]
+            hits.append({"score": score, "text": r.get("text", ""), "meta": r.get("meta", {})})
+            ctx_parts.append(r.get("text", ""))
+
+            m = r.get("meta") or {}
+            src = m.get("source")
+            if isinstance(src, str) and src and src not in sources:
+                sources.append(src)
+
+        context = "\n\n---\n\n".join(ctx_parts)
+        system = (
+            "You are AURA. Answer ONLY using the provided context. "
+            "If the context doesn't contain the answer, say you don't have enough information."
+        )
+        prompt = f"CONTEXT:\n{context}\n\nQUESTION:\n{query}\n\nANSWER:"
+
+        answer = await self.client.generate(prompt=prompt, system=system)
 
         return {"answer": answer, "sources": sources, "hits": hits}

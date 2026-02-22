@@ -11,9 +11,6 @@ type ChatResponse = {
   sources?: string[];
   detail?: string;
   message?: string;
-  inserted_chunks?: number;
-  skipped_files?: number;
-  files_found?: number;
 };
 
 export default function SimulatorPage() {
@@ -21,19 +18,17 @@ export default function SimulatorPage() {
   const [history, setHistory] = useState<ChatMsg[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [building, setBuilding] = useState(false);
-
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [statusText, setStatusText] = useState<string>("");
+
+  const [databases, setDatabases] = useState<string[]>([]);
+  const [activeDb, setActiveDb] = useState<string>("");
 
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const API_URL = useMemo(() => {
-    const env = (import.meta as unknown as { env?: Record<string, string> }).env;
-    return env?.VITE_API_URL?.trim() || "http://localhost:9000";
+    return (import.meta.env.VITE_API_URL as string | undefined)?.trim() || "http://localhost:9000";
   }, []);
 
   useEffect(() => {
@@ -42,11 +37,13 @@ export default function SimulatorPage() {
 
   // Auto-scroll chat
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [history, loading]);
 
-  // Ping backend health
+  // Health ping (less spam + pause when hidden)
   useEffect(() => {
+    let timer: any = null;
     let cancelled = false;
 
     const ping = async () => {
@@ -58,82 +55,85 @@ export default function SimulatorPage() {
       }
     };
 
+    const start = () => {
+      if (!timer) timer = setInterval(ping, 15000);
+    };
+
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+    };
+
+    const onVis = () => (document.hidden ? stop() : start());
+
     ping();
-    const t = setInterval(ping, 8000);
+    start();
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [API_URL]);
+
+  // Load databases
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/databases`);
+        const data = await res.json().catch(() => null);
+        const list = Array.isArray(data?.databases) ? (data.databases as string[]) : [];
+        if (cancelled) return;
+
+        setDatabases(list);
+
+        setActiveDb((prev) => {
+          if (prev && list.includes(prev)) return prev;
+          return list[0] || "";
+        });
+      } catch {
+        if (!cancelled) {
+          setDatabases([]);
+          setActiveDb("");
+        }
+      }
+    };
+
+    load();
+    const t = setInterval(load, 20000);
+
     return () => {
       cancelled = true;
       clearInterval(t);
     };
   }, [API_URL]);
 
-  const handleUpload = async () => {
-    if (selectedFiles.length === 0 || uploading) return;
-
-    setUploading(true);
-    setStatusText("");
-
-    try {
-      const fd = new FormData();
-      for (const f of selectedFiles) fd.append("files", f);
-
-      const res = await fetch(`${API_URL}/api/upload`, {
-        method: "POST",
-        body: fd,
-      });
-
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.detail || data?.message || "Upload failed");
-
-      setStatusText(`✅ Uploaded ${selectedFiles.length} file(s). Now click “Build DB”.`);
-    } catch (err: any) {
-      setStatusText(`❌ Upload error: ${err?.message || String(err)}`);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handleBuild = async () => {
-    if (building) return;
-    setBuilding(true);
-    setStatusText("");
-
-    try {
-      const res = await fetch(`${API_URL}/api/build?force_reload=true`, {
-        method: "POST",
-      });
-
-      const data = (await res.json().catch(() => null)) as ChatResponse | null;
-      if (!res.ok) throw new Error(data?.detail || data?.message || "Build failed");
-
-      setStatusText(
-        `✅ DB built. Files: ${data?.files_found ?? "?"}. Inserted chunks: ${
-          data?.inserted_chunks ?? "?"
-        }. Skipped files: ${data?.skipped_files ?? "?"}.`
-      );
-    } catch (err: any) {
-      setStatusText(`❌ Build error: ${err?.message || String(err)}`);
-    } finally {
-      setBuilding(false);
-    }
-  };
-
   const handleSearch = async () => {
     const q = query.trim();
     if (!q || loading) return;
+
+    if (!activeDb) {
+      setStatusText("❌ No database selected. Create/build one on the Database page first.");
+      return;
+    }
 
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
+    setStatusText("");
     setHistory((prev) => [...prev, { role: "user", content: q }]);
     setQuery("");
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/chat`, {
+      const res = await fetch(`${API_URL}/api/databases/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q }),
+        body: JSON.stringify({ db: activeDb, query: q }),
         signal: controller.signal,
       });
 
@@ -154,7 +154,7 @@ export default function SimulatorPage() {
           ? data.answer
           : "(No answer returned)";
 
-      const sources = Array.isArray(data?.sources) ? data!.sources : [];
+      const sources = Array.isArray(data?.sources) ? data.sources : [];
       setHistory((prev) => [...prev, { role: "ai", content: answer, sources }]);
     } catch (err: any) {
       if (err?.name === "AbortError") return;
@@ -198,7 +198,7 @@ export default function SimulatorPage() {
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
               <h1 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: "var(--text)" }}>
-                Edge Device Simulator
+                RAG Chat
               </h1>
 
               <span
@@ -209,8 +209,7 @@ export default function SimulatorPage() {
                   border: "1px solid var(--card-border)",
                   background: "color-mix(in srgb, var(--card-bg) 85%, var(--accent-soft))",
                   color: "var(--muted-text)",
-                  fontFamily:
-                    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                 }}
               >
                 API: {API_URL}
@@ -218,8 +217,8 @@ export default function SimulatorPage() {
             </div>
 
             <p style={{ margin: "6px 0 0", color: "var(--muted-text)", fontSize: 13 }}>
-              Upload documents, build the local index, and test the RAG pipeline before Jetson
-              deployment.
+              Pick a database and ask questions. Manage documents + build databases in the Database
+              page.
             </p>
           </div>
 
@@ -243,82 +242,59 @@ export default function SimulatorPage() {
           </span>
         </div>
 
-        {/* Controls */}
+        {/* DB selector */}
         <div
           style={{
-            padding: 16,
+            padding: 14,
             borderBottom: "1px solid var(--card-border)",
-            display: "grid",
-            gridTemplateColumns: "1fr auto auto",
+            display: "flex",
             gap: 10,
             alignItems: "center",
+            flexWrap: "wrap",
           }}
         >
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <input
-              type="file"
-              multiple
-              onChange={(e) => setSelectedFiles(Array.from(e.target.files ?? []))}
+            <div style={{ fontSize: 12, color: "var(--muted-text)", fontWeight: 900 }}>
+              Database
+            </div>
+
+            <select
+              value={activeDb}
+              onChange={(e) => setActiveDb(e.target.value)}
               style={{
-                maxWidth: 520,
-                width: "100%",
-                padding: 10,
+                minWidth: 260,
+                padding: "10px 12px",
                 borderRadius: 12,
                 border: "1px solid var(--card-border)",
                 background: "var(--card-bg)",
                 color: "var(--text)",
+                fontWeight: 800,
               }}
-            />
-            <span style={{ color: "var(--muted-text)", fontSize: 12 }}>
-              {selectedFiles.length > 0 ? `${selectedFiles.length} selected` : "Select docs to upload"}
+              disabled={databases.length === 0}
+            >
+              {databases.length === 0 ? (
+                <option value="">No databases found</option>
+              ) : (
+                databases.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))
+              )}
+            </select>
+
+            <span style={{ fontSize: 12, color: "var(--muted-text)" }}>
+              {databases.length ? `${databases.length} available` : "Create one in Database page"}
             </span>
           </div>
 
-          <button
-            onClick={handleUpload}
-            disabled={uploading || selectedFiles.length === 0}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid var(--card-border)",
-              background: "var(--card-bg)",
-              color: "var(--text)",
-              fontWeight: 900,
-              cursor: uploading || selectedFiles.length === 0 ? "not-allowed" : "pointer",
-              boxShadow: "none",
-            }}
-            title="Upload documents to backend staging folder"
-          >
-            {uploading ? "Uploading…" : "Upload Docs"}
-          </button>
-
-          <button
-            onClick={handleBuild}
-            disabled={building}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 12,
-              border: "1px solid rgba(0,0,0,0)",
-              background: "var(--accent)",
-              color: "white",
-              fontWeight: 900,
-              cursor: building ? "not-allowed" : "pointer",
-              boxShadow: "var(--shadow)",
-              opacity: building ? 0.75 : 1,
-            }}
-            title="Build the LightRAG index"
-          >
-            {building ? "Building…" : "Build DB"}
-          </button>
-        </div>
-
-        {/* Status line */}
-        {statusText && (
-          <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--card-border)" }}>
+          {statusText && (
             <div
               style={{
+                marginLeft: "auto",
                 padding: "10px 12px",
                 borderRadius: 12,
+                border: "1px solid var(--card-border)",
                 background: "color-mix(in srgb, var(--card-bg) 85%, var(--accent-soft))",
                 color: "var(--muted-text)",
                 fontSize: 13,
@@ -326,27 +302,25 @@ export default function SimulatorPage() {
             >
               {statusText}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Chat */}
         <div
           ref={scrollRef}
           style={{
-            height: 520,
+            height: 560,
             overflowY: "auto",
             padding: 16,
             background: "color-mix(in srgb, var(--bg) 85%, var(--accent-soft))",
           }}
         >
           {history.length === 0 && !loading && (
-            <div style={{ textAlign: "center", color: "var(--muted-text)", padding: "60px 16px" }}>
-              <div style={{ fontSize: 14, fontWeight: 900, marginBottom: 6 }}>
-                Ready when you are.
-              </div>
-              <div style={{ fontSize: 13 }}>
-                Upload docs → Build DB → Ask something like:
-                <span style={{ fontFamily: "monospace" }}> “What is Ohm’s law?”</span>
+            <div style={{ textAlign: "center", color: "var(--muted-text)", padding: "70px 16px" }}>
+              <div style={{ fontSize: 14, fontWeight: 900, marginBottom: 8 }}>Ready.</div>
+              <div style={{ fontSize: 13, maxWidth: 680, margin: "0 auto" }}>
+                Choose a database above, then ask something like:
+                <span style={{ fontFamily: "monospace" }}> “Explain Ohm’s law with units.”</span>
               </div>
             </div>
           )}
@@ -376,7 +350,8 @@ export default function SimulatorPage() {
             } else if (isError) {
               bubbleStyle.background = "color-mix(in srgb, var(--status-bad) 12%, var(--card-bg))";
               bubbleStyle.color = "color-mix(in srgb, var(--status-bad) 80%, var(--text))";
-              bubbleStyle.border = "1px solid color-mix(in srgb, var(--status-bad) 35%, var(--card-border))";
+              bubbleStyle.border =
+                "1px solid color-mix(in srgb, var(--status-bad) 35%, var(--card-border))";
               bubbleStyle.borderBottomLeftRadius = 6;
             } else {
               bubbleStyle.borderBottomLeftRadius = 6;
@@ -448,7 +423,7 @@ export default function SimulatorPage() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ask a question about the documents…"
+            placeholder={activeDb ? `Ask ${activeDb}…` : "Create a database first…"}
             disabled={loading}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -469,7 +444,7 @@ export default function SimulatorPage() {
 
           <button
             onClick={handleSearch}
-            disabled={loading || !query.trim()}
+            disabled={loading || !query.trim() || !activeDb}
             style={{
               padding: "12px 16px",
               borderRadius: 12,
@@ -477,12 +452,12 @@ export default function SimulatorPage() {
               background: "var(--accent)",
               color: "white",
               fontWeight: 900,
-              cursor: loading || !query.trim() ? "not-allowed" : "pointer",
-              opacity: loading || !query.trim() ? 0.6 : 1,
+              cursor: loading || !query.trim() || !activeDb ? "not-allowed" : "pointer",
+              opacity: loading || !query.trim() || !activeDb ? 0.6 : 1,
               boxShadow: "var(--shadow)",
             }}
           >
-            Test Model
+            Ask
           </button>
         </div>
       </div>

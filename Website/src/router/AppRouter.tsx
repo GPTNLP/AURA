@@ -8,7 +8,7 @@ import CameraPage from "../pages/CameraPage";
 import ControlPage from "../pages/ControlPage";
 import SettingsPage from "../pages/SettingsPage";
 
-import FilesPage from "../pages/FilesPage";
+import DatabasePage from "../pages/DatabasePage";
 import ChatLogsPage from "../pages/ChatLogsPage";
 import SimulatorPage from "../pages/SimulatorPage";
 
@@ -45,8 +45,16 @@ export default function AppRouter() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="control" element={<ControlPage />} />
         <Route path="camera" element={<CameraPage />} />
+
+        {/* ✅ Simulator = chat */}
         <Route path="simulator" element={<SimulatorPage />} />
-        <Route path="files" element={<FilesPage />} />
+
+        {/* ✅ Database page is canonical */}
+        <Route path="database" element={<DatabasePage />} />
+
+        {/* ✅ Old route still works */}
+        <Route path="files" element={<Navigate to="/database" replace />} />
+
         <Route path="logs" element={<ChatLogsPage />} />
         <Route path="settings" element={<SettingsPage />} />
 

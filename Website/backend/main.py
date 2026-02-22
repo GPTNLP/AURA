@@ -59,9 +59,8 @@ def include_router_safely(module_name: str, label: str):
     except Exception as e:
         print(f"⚠️ Router not loaded ({label}): {e}")
 
+# Your new unified DB/doc system:
+include_router_safely("database_api", "database_api")
 include_router_safely("camera_api", "camera_api")
-include_router_safely("files_api", "files_api")
 include_router_safely("admin_auth_api", "admin_auth_api")
 include_router_safely("logs_api", "logs_api")
-include_router_safely("admin_tools_api", "admin_tools_api")
-include_router_safely("simulator_api", "simulator_api")
