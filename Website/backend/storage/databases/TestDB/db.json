@@ -1,0 +1,10 @@
+{
+  "name": "TestDB",
+  "folders": [
+    "TestFOlder",
+    "TestFolder"
+  ],
+  "llm_model": "llama3.1:8b",
+  "embed_model": "nomic-embed-text",
+  "ollama_url": "http://127.0.0.1:11434"
+}
