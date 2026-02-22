@@ -1,19 +1,16 @@
+# Website/backend/simulator_api.py
 import os
+import json
 import shutil
-from typing import List, Optional
-
 import asyncio
-import numpy as np
+from typing import List, Optional, Dict, Any
+
+import httpx
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
+from pypdf import PdfReader
 
-from pypdf import PdfReader  # <-- NEW
-
-from lightrag import LightRAG, QueryParam
-from lightrag.utils import setup_logger, wrap_embedding_func_with_attrs
-from lightrag.llm.ollama import ollama_model_complete, ollama_embed
-
-setup_logger("lightrag", level="INFO")
+from lightrag_local import LightRAG, QueryParam
 
 router = APIRouter(tags=["simulator"])
 
@@ -22,12 +19,12 @@ WEBSITE_DIR = os.path.dirname(BACKEND_DIR)                     # Website/
 PROJECT_ROOT = os.path.dirname(WEBSITE_DIR)                    # AURA/
 DEFAULT_DOCS_DIR = os.path.join(PROJECT_ROOT, "ECEN_214_Docs") # AURA/ECEN_214_Docs
 
-# Prefer env var, fallback to AURA/ECEN_214_Docs
 DOCS_DIR = os.path.abspath(os.getenv("AURA_DOCS_DIR", DEFAULT_DOCS_DIR))
-
 STORAGE_DIR = os.path.join(BACKEND_DIR, "storage")
 RAG_WORKDIR = os.path.join(STORAGE_DIR, "rag_workdir")
 
+# Ollama server (already running on 11434 on your machine)
+OLLAMA_BASE = os.getenv("OLLAMA_BASE", "http://127.0.0.1:11434")
 LLM_MODEL = os.getenv("AURA_LLM_MODEL", "llama3.1:8b")
 EMBED_MODEL = os.getenv("AURA_EMBED_MODEL", "nomic-embed-text")
 
@@ -42,26 +39,19 @@ def _read_text(path: str) -> str:
 
 
 def _read_pdf(path: str) -> str:
-    try:
-        reader = PdfReader(path)
-        parts = []
-        for page in reader.pages:
-            txt = page.extract_text() or ""
-            if txt.strip():
-                parts.append(txt)
-        return "\n\n".join(parts)
-    except Exception:
-        return ""
+    reader = PdfReader(path)
+    parts = []
+    for page in reader.pages:
+        txt = page.extract_text() or ""
+        if txt.strip():
+            parts.append(txt)
+    return "\n\n".join(parts)
 
 
 def _chunk_text(text: str, max_chars: int = 2400, overlap: int = 250) -> List[str]:
-    """
-    Simple chunker so we don't shove massive PDFs into a single insert.
-    """
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not text:
         return []
-
     chunks = []
     i = 0
     n = len(text)
@@ -76,13 +66,47 @@ def _chunk_text(text: str, max_chars: int = 2400, overlap: int = 250) -> List[st
     return chunks
 
 
-@wrap_embedding_func_with_attrs(
-    embedding_dim=768,
-    max_token_size=8192,
-    model_name=EMBED_MODEL,
-)
-async def embedding_func(texts: List[str]) -> np.ndarray:
-    return await ollama_embed.func(texts, embed_model=EMBED_MODEL)
+class OllamaEmbedClient:
+    def __init__(self, base: str, model: str):
+        self.base = base
+        self.model = model
+
+    async def embed(self, text: str):
+        # Ollama embeddings endpoint
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(
+                f"{self.base}/api/embeddings",
+                json={"model": self.model, "prompt": text},
+            )
+            r.raise_for_status()
+            data = r.json()
+            vec = data.get("embedding")
+            if not vec:
+                raise RuntimeError("Ollama returned no embedding")
+            import numpy as np
+            return np.array(vec, dtype=np.float32)
+
+
+class OllamaLLMClient:
+    def __init__(self, base: str, model: str):
+        self.base = base
+        self.model = model
+
+    async def complete(self, system: str, prompt: str) -> str:
+        # /api/generate returns streaming by default; set stream false
+        async with httpx.AsyncClient(timeout=180) as client:
+            r = await client.post(
+                f"{self.base}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "system": system,
+                    "stream": False,
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+            return (data.get("response") or "").strip()
 
 
 _rag: Optional[LightRAG] = None
@@ -96,18 +120,19 @@ async def get_rag() -> LightRAG:
             return _rag
 
         _ensure_dirs()
-        _rag = LightRAG(
-            working_dir=RAG_WORKDIR,
-            llm_model_func=ollama_model_complete,
-            llm_model_name=LLM_MODEL,
-            embedding_func=embedding_func,
-        )
-        await _rag.initialize_storages()
+        llm = OllamaLLMClient(OLLAMA_BASE, LLM_MODEL)
+        emb = OllamaEmbedClient(OLLAMA_BASE, EMBED_MODEL)
+        _rag = LightRAG(llm_client=llm, embed_client=emb)
         return _rag
 
 
 class ChatRequest(BaseModel):
     query: str
+
+
+@router.get("/api/docs-dir")
+async def docs_dir():
+    return {"docs_dir": DOCS_DIR}
 
 
 @router.post("/api/chat")
@@ -116,18 +141,22 @@ async def chat(req: ChatRequest):
     if not q:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
+    # Verify Ollama is reachable (nice error)
     try:
-        rag = await get_rag()
-        ans = await rag.aquery(q, param=QueryParam(mode="hybrid"))
-        return {"answer": str(ans), "sources": []}
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{OLLAMA_BASE}/api/tags")
+            r.raise_for_status()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail=f"Ollama not reachable at {OLLAMA_BASE}. {e}")
+
+    rag = await get_rag()
+    out = await rag.aquery(q, param=QueryParam(mode="hybrid"))
+    return {"answer": out["answer"], "sources": out.get("sources", [])}
 
 
-# Optional: keep upload, but NOT required if you index ECEN_214_Docs directly.
 @router.post("/api/upload")
 async def upload(files: List[UploadFile] = File(...)):
-    # If you still want uploads, we store them into DOCS_DIR/uploads/
+    # store uploads into DOCS_DIR/_uploads/
     upload_dir = os.path.join(DOCS_DIR, "_uploads")
     os.makedirs(upload_dir, exist_ok=True)
 
@@ -144,14 +173,13 @@ async def upload(files: List[UploadFile] = File(...)):
 @router.post("/api/build")
 async def build(force_reload: bool = True):
     """
-    Build LightRAG from DOCS_DIR (default: AURA/ECEN_214_Docs).
-    PDFs are parsed into text and chunked.
+    Build local vector store from DOCS_DIR (default: AURA/ECEN_214_Docs).
     """
     if not os.path.exists(DOCS_DIR):
         raise HTTPException(status_code=400, detail=f"DOCS_DIR not found: {DOCS_DIR}")
 
     # Gather files
-    all_files = []
+    all_files: List[str] = []
     for root, _, files in os.walk(DOCS_DIR):
         for name in files:
             ext = os.path.splitext(name)[1].lower()
@@ -161,52 +189,43 @@ async def build(force_reload: bool = True):
     if not all_files:
         raise HTTPException(status_code=400, detail=f"No .pdf/.txt/.md files found in {DOCS_DIR}")
 
-    try:
-        global _rag
+    global _rag
 
-        if force_reload and os.path.exists(RAG_WORKDIR):
-            shutil.rmtree(RAG_WORKDIR)
-        os.makedirs(RAG_WORKDIR, exist_ok=True)
+    # reset local rag memory
+    async with _lock:
+        _rag = None
 
-        async with _lock:
-            _rag = None
+    rag = await get_rag()
 
-        rag = await get_rag()
+    inserted_chunks = 0
+    skipped_files = 0
 
-        inserted_chunks = 0
-        skipped_files = 0
+    for path in all_files:
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            text = _read_pdf(path) if ext == ".pdf" else _read_text(path)
+        except Exception:
+            text = ""
 
-        for path in all_files:
-            ext = os.path.splitext(path)[1].lower()
+        if not text.strip():
+            skipped_files += 1
+            continue
 
-            if ext == ".pdf":
-                text = _read_pdf(path)
-            else:
-                text = _read_text(path)
+        rel = os.path.relpath(path, DOCS_DIR)
+        header = f"[SOURCE FILE: {rel}]\n\n"
+        chunks = _chunk_text(header + text)
 
-            if not text.strip():
-                skipped_files += 1
-                continue
+        for c in chunks:
+            await rag.ainsert(c, meta={"source": rel})
+            inserted_chunks += 1
 
-            # Add filename header so the model “knows” where content came from
-            header = f"[SOURCE FILE: {os.path.relpath(path, DOCS_DIR)}]\n\n"
-            chunks = _chunk_text(header + text)
-
-            for c in chunks:
-                await rag.ainsert(c)
-                inserted_chunks += 1
-
-        return {
-            "status": "LightRAG database built",
-            "docs_dir": DOCS_DIR,
-            "files_found": len(all_files),
-            "skipped_files": skipped_files,
-            "inserted_chunks": inserted_chunks,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/api/docs-dir")
-async def docs_dir():
-    return {"docs_dir": DOCS_DIR}
+    return {
+        "status": "Local RAG index built",
+        "docs_dir": DOCS_DIR,
+        "files_found": len(all_files),
+        "skipped_files": skipped_files,
+        "inserted_chunks": inserted_chunks,
+        "ollama_base": OLLAMA_BASE,
+        "llm_model": LLM_MODEL,
+        "embed_model": EMBED_MODEL,
+    }
