@@ -4,6 +4,10 @@ import requests
 import zipfile
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from langchain_ollama import ChatOllama
+from lightrag import LightRAG
+from config import DEFAULT_MODEL
 
 # --- Paths & Constants ---
 BASE_DIR = os.getcwd()
@@ -26,7 +30,29 @@ app.add_middleware(
 
 # NOTE: You will need to drop your `database_bridge.py` into this backend folder 
 # and import it here to handle the Chroma logic, as established in the previous step.
-from database_bridge import InitializeDatabase
+from database_bridge import InitializeDatabase, LoadDatabase
+
+class ChatRequest(BaseModel):
+    query: str
+
+@app.post("/api/chat")
+async def simulate_chat(request: ChatRequest):
+    """Simulates the Jetson Nano chat experience locally on the Admin machine."""
+    # 1. Load the locally compiled database
+    db = LoadDatabase()
+    if not db:
+        raise HTTPException(status_code=404, detail="No local database found. Please build the database first.")
+    
+    try:
+        # 2. Initialize the model (Ensure Ollama is running on your admin machine)
+        llm = ChatOllama(model=DEFAULT_MODEL, temperature=0.05)
+        rag_system = LightRAG(llm, db)
+        
+        # 3. Generate the response
+        result = rag_system.generate(request.query)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/upload")
 async def upload_docs(files: list[UploadFile] = File(...)):
