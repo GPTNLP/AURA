@@ -15,7 +15,6 @@ from security_tokens import mint_app_token
 from security import require_ip_allowlist, domain_allowed
 from otp_store import OTPStore, hash_code
 
-# Local dev only
 env_path = Path(__file__).resolve().parents[1] / ".env"
 if env_path.exists():
     load_dotenv(env_path)
@@ -29,7 +28,6 @@ SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 STUDENT_OTP_TTL_SECONDS = int(os.getenv("STUDENT_OTP_TTL_SECONDS", "300"))
 STUDENT_MAX_OTP_ATTEMPTS = int(os.getenv("STUDENT_MAX_OTP_ATTEMPTS", "5"))
 
-# Rate limit student OTP starts (per IP)
 STUDENT_RATE_WINDOW = int(os.getenv("STUDENT_RATE_WINDOW", "300"))
 STUDENT_RATE_MAX = int(os.getenv("STUDENT_RATE_MAX", "20"))
 
@@ -129,18 +127,34 @@ async def verify(data: StudentVerifyRequest, request: Request, response: Respons
 
     result = mint_app_token(email=email, role="student")
 
+    is_https = (request.url.scheme == "https") or (request.headers.get("x-forwarded-proto", "") == "https")
     response.set_cookie(
         key="aura_token",
         value=result["token"],
         httponly=True,
-        secure=True,
+        secure=is_https,
         samesite="lax",
         max_age=result["expires_in"],
+        path="/",
     )
 
-    return {"user": result["user"], "expires_in": result["expires_in"]}
+    return {
+        "token": result["token"],
+        "user": result["user"],
+        "expires_in": result["expires_in"],
+    }
+
+@router.get("/me")
+def me(request: Request):
+    require_ip_allowlist(request)
+    from security import require_auth
+    payload = require_auth(request)
+    return {
+        "user": {"email": payload.get("sub"), "role": payload.get("role")},
+        "exp": payload.get("exp"),
+    }
 
 @router.post("/logout")
 def logout(response: Response):
-    response.delete_cookie("aura_token")
+    response.delete_cookie("aura_token", path="/")
     return {"ok": True}
