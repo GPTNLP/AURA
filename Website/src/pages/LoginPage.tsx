@@ -6,51 +6,19 @@ import logo from "../assets/robot.png";
 import AdminOtpModal from "../components/AdminOtpModal";
 
 export default function LoginPage() {
-  const { adminStartLogin, adminVerifyOtp, studentStart, studentVerify } = useAuth();
+  const { adminStartLogin, adminVerifyOtp } = useAuth();
   const navigate = useNavigate();
 
-  const [mode, setMode] = useState<"select" | "admin" | "student">("select");
-
-  // admin fields
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-
-  // student field
-  const [studentEmail, setStudentEmail] = useState("");
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // OTP modal state
   const [showOtp, setShowOtp] = useState(false);
-  const [otpMode, setOtpMode] = useState<"admin" | "student">("admin");
   const [otpEmail, setOtpEmail] = useState("");
   const [otpError, setOtpError] = useState<string | null>(null);
-
-  // =========================
-  // Student OTP Start
-  // =========================
-  const startStudent = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
-
-    try {
-      const email = studentEmail.trim().toLowerCase();
-      if (!email.endsWith("@tamu.edu")) throw new Error("Only TAMU emails are allowed.");
-
-      await studentStart(email);
-
-      setOtpMode("student");
-      setOtpEmail(email);
-      setOtpError(null);
-      setShowOtp(true);
-    } catch (err: any) {
-      setError(err?.message || "Student login failed.");
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // =========================
   // Admin OTP Start
@@ -61,30 +29,27 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      await adminStartLogin(adminEmail.trim(), adminPassword);
-      setOtpMode("admin");
-      setOtpEmail(adminEmail.trim().toLowerCase());
+      const email = adminEmail.trim().toLowerCase();
+      await adminStartLogin(email, adminPassword);
+
+      setOtpEmail(email);
       setOtpError(null);
       setShowOtp(true);
-    } catch {
-      setError("Invalid admin credentials.");
+    } catch (err: any) {
+      setError(err?.message || "Invalid admin credentials.");
     } finally {
       setLoading(false);
     }
   };
 
   // =========================
-  // OTP Verify (Admin or Student)
+  // OTP Verify (Admin)
   // =========================
   const verifyOtp = async (otp: string) => {
     setOtpError(null);
-    try {
-      if (otpMode === "admin") {
-        await adminVerifyOtp(otpEmail, otp);
-      } else {
-        await studentVerify(otpEmail, otp);
-      }
 
+    try {
+      await adminVerifyOtp(otpEmail, otp);
       setShowOtp(false);
       navigate("/", { replace: true });
     } catch (err: any) {
@@ -103,95 +68,34 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {mode === "select" && (
-          <div className="login-form">
-            {error && <div className="login-error">{error}</div>}
+        <form onSubmit={startAdmin} className="login-form">
+          <label className="login-label">Admin Email</label>
+          <input
+            className="login-input"
+            value={adminEmail}
+            onChange={(e) => setAdminEmail(e.target.value)}
+            placeholder="admin@email.com"
+            autoComplete="email"
+          />
 
-            <button className="login-btn" onClick={() => setMode("admin")} disabled={loading}>
-              Admin Login
-            </button>
+          <label className="login-label">Password</label>
+          <input
+            className="login-input"
+            type="password"
+            value={adminPassword}
+            onChange={(e) => setAdminPassword(e.target.value)}
+            placeholder="Enter admin password"
+            autoComplete="current-password"
+          />
 
-            <button
-              className="login-btn login-btn-secondary"
-              onClick={() => setMode("student")}
-              disabled={loading}
-            >
-              Student Login (TAMU Email OTP)
-            </button>
+          {error && <div className="login-error">{error}</div>}
 
-            <div className="login-footnote">Choose your access portal</div>
-          </div>
-        )}
+          <button className="login-btn" type="submit" disabled={loading}>
+            {loading ? "Sending code..." : "Send Code"}
+          </button>
 
-        {mode === "admin" && (
-          <form onSubmit={startAdmin} className="login-form">
-            <label className="login-label">Admin Email</label>
-            <input
-              className="login-input"
-              value={adminEmail}
-              onChange={(e) => setAdminEmail(e.target.value)}
-              placeholder="admin@email.com"
-              autoComplete="email"
-            />
-
-            <label className="login-label">Password</label>
-            <input
-              className="login-input"
-              type="password"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              placeholder="Enter admin password"
-              autoComplete="current-password"
-            />
-
-            {error && <div className="login-error">{error}</div>}
-
-            <button className="login-btn" type="submit" disabled={loading}>
-              {loading ? "Sending code..." : "Send Code"}
-            </button>
-
-            <button
-              type="button"
-              className="login-btn login-btn-secondary"
-              onClick={() => setMode("select")}
-              disabled={loading}
-            >
-              ← Back
-            </button>
-          </form>
-        )}
-
-        {mode === "student" && (
-          <form onSubmit={startStudent} className="login-form">
-            <label className="login-label">TAMU Email</label>
-            <input
-              className="login-input"
-              value={studentEmail}
-              onChange={(e) => setStudentEmail(e.target.value)}
-              placeholder="netid@tamu.edu"
-              autoComplete="email"
-            />
-
-            {error && <div className="login-error">{error}</div>}
-
-            <button className="login-btn" type="submit" disabled={loading}>
-              {loading ? "Sending code..." : "Send Code"}
-            </button>
-
-            <button
-              type="button"
-              className="login-btn login-btn-secondary"
-              onClick={() => setMode("select")}
-              disabled={loading}
-            >
-              ← Back
-            </button>
-
-            <div className="login-footnote">
-              We’ll email a 6-digit code. No password is stored.
-            </div>
-          </form>
-        )}
+          <div className="login-footnote">Admin access only</div>
+        </form>
       </div>
 
       {showOtp && (
