@@ -9,12 +9,11 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
+  token: string | null;
 
-  // Admin OTP flow
   adminStartLogin: (email: string, password: string) => Promise<void>;
   adminVerifyOtp: (email: string, otp: string) => Promise<void>;
 
-  // Student OTP flow
   studentStart: (email: string) => Promise<void>;
   studentVerify: (email: string, otp: string) => Promise<void>;
 
@@ -24,28 +23,72 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>(null as any);
 
+const LS_TOKEN = "aura-auth-token";
+const LS_USER = "aura-user";
+
 const API_BASE =
   import.meta.env.VITE_AUTH_API_BASE ||
   import.meta.env.VITE_CAMERA_API_BASE ||
   "http://127.0.0.1:9000";
 
+function makeAuthHeaders(token: string | null): HeadersInit {
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(LS_TOKEN));
+  const [user, setUser] = useState<User | null>(() => {
+    const stored = localStorage.getItem(LS_USER);
+    return stored ? (JSON.parse(stored) as User) : null;
+  });
+
+  const setSession = (t: string, u: User) => {
+    setToken(t);
+    setUser(u);
+    localStorage.setItem(LS_TOKEN, t);
+    localStorage.setItem(LS_USER, JSON.stringify(u));
+  };
+
+  const clearSession = () => {
+    setToken(null);
+    setUser(null);
+    localStorage.removeItem(LS_TOKEN);
+    localStorage.removeItem(LS_USER);
+  };
 
   const refreshMe = async () => {
-    const res = await fetch(`${API_BASE}/auth/admin/me`, {
-      credentials: "include",
-    });
-
-    // If admin/me fails, try student/me if you have it (optional).
-    if (res.ok) {
-      const data = await res.json();
-      setUser(data.user);
+    if (!token) {
+      setUser(null);
       return;
     }
 
-    // Not logged in (or student route only). Just clear.
-    setUser(null);
+    // try admin/me first
+    let res = await fetch(`${API_BASE}/auth/admin/me`, {
+      headers: makeAuthHeaders(token),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      setUser(data.user);
+      localStorage.setItem(LS_USER, JSON.stringify(data.user));
+      return;
+    }
+
+    // then student/me (if implemented)
+    res = await fetch(`${API_BASE}/auth/student/me`, {
+      headers: makeAuthHeaders(token),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      setUser(data.user);
+      localStorage.setItem(LS_USER, JSON.stringify(data.user));
+      return;
+    }
+
+    // token invalid/expired
+    clearSession();
   };
 
   // -----------------------
@@ -55,8 +98,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await fetch(`${API_BASE}/auth/admin/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ email: email.trim(), password }),
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        password,
+      }),
     });
 
     if (!res.ok) {
@@ -69,8 +114,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await fetch(`${API_BASE}/auth/admin/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        otp: otp.trim(),
+      }),
     });
 
     if (!res.ok) {
@@ -78,7 +125,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(msg || "Invalid OTP");
     }
 
-    await refreshMe();
+    const data = await res.json().catch(() => null);
+    if (!data?.token || !data?.user) {
+      throw new Error("Server did not return a session token");
+    }
+
+    setSession(data.token, data.user);
   };
 
   // -----------------------
@@ -88,8 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await fetch(`${API_BASE}/auth/student/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ email: email.trim() }),
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
     });
 
     if (!res.ok) {
@@ -102,8 +153,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await fetch(`${API_BASE}/auth/student/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ email: email.trim(), otp: otp.trim() }),
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        otp: otp.trim(),
+      }),
     });
 
     if (!res.ok) {
@@ -111,22 +164,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(msg || "Invalid OTP");
     }
 
-    // If you add /auth/student/me later, call that here. For now:
-    // If your backend returns user, you can setUser directly.
     const data = await res.json().catch(() => null);
-    if (data?.user) setUser(data.user);
-    else await refreshMe();
+    if (!data?.token || !data?.user) {
+      throw new Error("Server did not return a session token");
+    }
+
+    setSession(data.token, data.user);
   };
 
   const logout = async () => {
-    // Add a backend /auth/logout endpoint to clear cookie, recommended.
-    // For now: just clear local state; cookie remains until expiry.
-    setUser(null);
+    // optional: call backend logout (clears cookie if you use it)
+    try {
+      await fetch(`${API_BASE}/auth/admin/logout`, { method: "POST" });
+    } catch {
+      // ignore
+    }
+    try {
+      await fetch(`${API_BASE}/auth/student/logout`, { method: "POST" });
+    } catch {
+      // ignore
+    }
+    clearSession();
   };
 
   const value = useMemo(
     () => ({
       user,
+      token,
       adminStartLogin,
       adminVerifyOtp,
       studentStart,
@@ -134,7 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshMe,
       logout,
     }),
-    [user]
+    [user, token]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

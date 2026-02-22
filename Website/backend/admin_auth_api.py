@@ -40,6 +40,11 @@ ADMIN_MAX_OTP_ATTEMPTS = int(os.getenv("ADMIN_MAX_OTP_ATTEMPTS", "5"))
 ADMIN_LOGIN_RATE_WINDOW = int(os.getenv("ADMIN_LOGIN_RATE_WINDOW", "300"))
 ADMIN_LOGIN_RATE_MAX = int(os.getenv("ADMIN_LOGIN_RATE_MAX", "10"))
 
+# Cookie settings
+COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "aura_token")
+COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax")  # lax/strict/none
+COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "")         # optional
+
 router = APIRouter(prefix="/auth/admin", tags=["admin-auth"])
 otp_store = OTPStore(prefix="adminotp")
 
@@ -51,7 +56,7 @@ class AdminVerifyRequest(BaseModel):
     email: str
     otp: str
 
-# --- Simple in-memory rate store (OK; Redis later if you want) ---
+# --- Simple in-memory rate store ---
 _RATE: Dict[str, Dict[str, Any]] = {}
 
 def _client_ip(request: Request) -> str:
@@ -104,9 +109,20 @@ def _load_admins() -> Dict[str, str]:
             out[email] = ph
     return out
 
+def _should_secure_cookie(request: Request) -> bool:
+    """
+    Secure cookies only work on HTTPS.
+    - Local dev (http://127.0.0.1) -> False
+    - Azure/real domain (https)     -> True
+    """
+    env = (os.getenv("ENV", "") or "").lower()
+    if env in ("prod", "production"):
+        return True
+    return request.url.scheme == "https"
+
 @router.post("/login")
 async def login(data: AdminLoginRequest, request: Request):
-    # Keep this if you want admin only from specific IPs (optional)
+    # Keep if you want; set ALLOWED_IPS empty in config to allow all
     require_ip_allowlist(request)
 
     ip = _client_ip(request)
@@ -115,7 +131,6 @@ async def login(data: AdminLoginRequest, request: Request):
     email = (data.email or "").strip().lower()
     password = (data.password or "").strip()
 
-    # Generic error prevents user enumeration
     invalid = HTTPException(status_code=401, detail="Invalid credentials")
 
     if not email or "@" not in email or not password:
@@ -148,7 +163,6 @@ async def verify(data: AdminVerifyRequest, request: Request, response: Response)
     if not rec:
         raise invalid
 
-    # expires handled in store.get() (redis TTL / mem check), but keep safe check:
     if int(rec.get("expires", 0)) and time.time() > int(rec["expires"]):
         otp_store.delete(email)
         raise invalid
@@ -164,29 +178,39 @@ async def verify(data: AdminVerifyRequest, request: Request, response: Response)
     otp_store.delete(email)
 
     result = mint_app_token(email=email, role="admin")
+    token = result["token"]
 
-    # ✅ Set secure httpOnly cookie
+    # Set cookie for convenience (works in Azure HTTPS, and in dev if not secure)
+    secure_cookie = _should_secure_cookie(request)
+
+    cookie_kwargs: Dict[str, Any] = {}
+    if COOKIE_DOMAIN.strip():
+        cookie_kwargs["domain"] = COOKIE_DOMAIN.strip()
+
     response.set_cookie(
-        key="aura_token",
-        value=result["token"],
+        key=COOKIE_NAME,
+        value=token,
         httponly=True,
-        secure=True,       # requires HTTPS (Azure provides)
-        samesite="lax",
+        secure=secure_cookie,
+        samesite=COOKIE_SAMESITE,
         max_age=result["expires_in"],
+        **cookie_kwargs,
     )
 
-    # Return user info only (token stays in cookie)
-    return {"user": result["user"], "expires_in": result["expires_in"]}
+    # ✅ IMPORTANT: also return token so your frontend session works immediately
+    return {"token": token, "user": result["user"], "expires_in": result["expires_in"]}
 
 @router.get("/me")
 def me(request: Request):
     require_ip_allowlist(request)
     from security import require_auth
     payload = require_auth(request)
-    return {"user": {"email": payload.get("sub"), "role": payload.get("role")}, "exp": payload.get("exp")}
+    return {
+        "user": {"email": payload.get("sub"), "role": payload.get("role")},
+        "exp": payload.get("exp"),
+    }
 
 @router.post("/logout")
 def logout(response: Response):
-    # Clears cookie
-    response.delete_cookie("aura_token")
+    response.delete_cookie(COOKIE_NAME)
     return {"ok": True}
