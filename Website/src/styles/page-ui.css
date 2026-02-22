@@ -1,0 +1,153 @@
+/* Token-based UI helpers for all pages (works with theme.css) */
+
+.page-shell {
+  width: 100%;
+}
+
+.page-wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.page-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 900;
+  letter-spacing: 0.2px;
+}
+
+.page-subtitle {
+  font-size: 12px;
+  color: var(--muted-text);
+  margin-top: 4px;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--shadow);
+}
+
+.card-pad {
+  padding: 18px;
+}
+
+.muted {
+  color: var(--muted-text);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: rgba(255,255,255,0.55);
+  color: var(--muted-text);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+[data-theme="robotic"] .badge,
+[data-theme="dark"] .badge {
+  background: rgba(255,255,255,0.04);
+}
+
+.btn {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: transparent;
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.btn:hover {
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-1px);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: rgba(0,0,0,0);
+  color: white;
+}
+
+.btn-primary:hover {
+  filter: brightness(1.03);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.input, .select {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text);
+  outline: none;
+}
+
+.input::placeholder {
+  color: color-mix(in srgb, var(--muted-text) 85%, transparent);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table thead tr {
+  background: color-mix(in srgb, var(--card-bg) 75%, var(--accent-soft));
+}
+
+.table th, .table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--card-border);
+  color: var(--text);
+  vertical-align: top;
+}
+
+.table tbody tr:hover {
+  background: color-mix(in srgb, var(--card-bg) 70%, var(--accent-soft));
+}
+
+.panel {
+  border: 1px dashed color-mix(in srgb, var(--card-border) 70%, var(--accent));
+  background: color-mix(in srgb, var(--card-bg) 85%, var(--accent-soft));
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.status-box {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--card-border);
+  background: color-mix(in srgb, var(--card-bg) 85%, var(--accent-soft));
+}

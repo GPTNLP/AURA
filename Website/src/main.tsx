@@ -5,10 +5,9 @@ import { BrowserRouter } from "react-router-dom";
 import AppRouter from "./router/AppRouter";
 import { AuthProvider } from "./services/authService";
 import "./styles/index.css";
-
-// Apply saved theme BEFORE React renders
+import "./styles/page-ui.css";
 import { loadTheme, applyTheme } from "./services/themeStore";
-import "./styles/index.css";
+
 applyTheme(loadTheme());
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

@@ -10,7 +10,7 @@ import SettingsPage from "../pages/SettingsPage";
 
 import FilesPage from "../pages/FilesPage";
 import ChatLogsPage from "../pages/ChatLogsPage";
-import BotPage from "../pages/BotPage";
+import SimulatorPage from "../pages/SimulatorPage";
 
 import Layout from "../components/Layout/Layout";
 
@@ -18,7 +18,6 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   const { token, refreshMe } = useAuth();
   const location = useLocation();
 
-  // try to restore user if token exists
   useEffect(() => {
     if (token) refreshMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -31,8 +30,10 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 export default function AppRouter() {
   return (
     <Routes>
+      {/* Public */}
       <Route path="/login" element={<LoginPage />} />
 
+      {/* Protected */}
       <Route
         element={
           <RequireAuth>
@@ -44,14 +45,17 @@ export default function AppRouter() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="control" element={<ControlPage />} />
         <Route path="camera" element={<CameraPage />} />
+        <Route path="simulator" element={<SimulatorPage />} />
+        <Route path="files" element={<FilesPage />} />
+        <Route path="logs" element={<ChatLogsPage />} />
         <Route path="settings" element={<SettingsPage />} />
 
-        <Route path="files" element={<FilesPage />} />
-        <Route path="bot" element={<BotPage />} />
-        <Route path="logs" element={<ChatLogsPage />} />
-
+        {/* Protected catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
+
+      {/* Global catch-all */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

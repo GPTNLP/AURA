@@ -1,6 +1,6 @@
-// Website/src/pages/ChatLogsPage.tsx
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../services/authService";
+import "../styles/page-ui.css";
 
 type LogItem = {
   ts: number;
@@ -26,21 +26,6 @@ function fmtTime(ts: number) {
     return String(ts);
   }
 }
-
-const inputStyle: React.CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 10,
-  border: "1px solid rgba(120,150,255,0.18)",
-  background: "rgba(6,12,22,0.65)",
-  color: "var(--text)",
-  outline: "none",
-};
-
-const selectStyle: React.CSSProperties = {
-  ...inputStyle,
-  cursor: "pointer",
-  colorScheme: "dark",
-};
 
 export default function ChatLogsPage() {
   const { token, user } = useAuth();
@@ -80,10 +65,7 @@ export default function ChatLogsPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `Request failed (${res.status})`);
-      }
+      if (!res.ok) throw new Error(await res.text());
 
       const data = await res.json();
       setItems((data.items || []) as LogItem[]);
@@ -105,53 +87,34 @@ export default function ChatLogsPage() {
 
   if (!token) {
     return (
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <h2 style={{ marginTop: 0 }}>Chat Logs</h2>
-        <div style={{ opacity: 0.8 }}>Please login.</div>
+      <div className="page-wrap">
+        <h2 className="page-title">Chat Logs</h2>
+        <div className="muted">Please login.</div>
       </div>
     );
   }
 
   if (!isAdmin) {
     return (
-      <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <h2 style={{ marginTop: 0 }}>Chat Logs</h2>
-        <div style={{ opacity: 0.8 }}>Admin only.</div>
+      <div className="page-wrap">
+        <h2 className="page-title">Chat Logs</h2>
+        <div className="muted">Admin only.</div>
       </div>
     );
   }
 
   return (
-    <div style={{ width: "100%" }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-          <h2 style={{ marginTop: 0 }}>Chat Logs</h2>
+    <div className="page-shell">
+      <div className="page-wrap">
+        <div className="page-header">
+          <h2 className="page-title">Chat Logs</h2>
 
-          <button
-            onClick={fetchLogs}
-            disabled={loading}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              border: "1px solid rgba(120,150,255,0.22)",
-              background: "rgba(255,255,255,0.04)",
-              color: "var(--text)",
-              cursor: "pointer",
-            }}
-          >
+          <button onClick={fetchLogs} disabled={loading} className="btn">
             {loading ? "Refreshing..." : "Refresh"}
           </button>
         </div>
 
-        <div
-          style={{
-            padding: 14,
-            borderRadius: 12,
-            border: "1px solid rgba(120,150,255,0.18)",
-            background: "rgba(255,255,255,0.04)",
-            marginBottom: 14,
-          }}
-        >
+        <div className="card card-pad" style={{ marginBottom: 14 }}>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             <input
               value={q}
@@ -160,7 +123,8 @@ export default function ChatLogsPage() {
                 setQ(e.target.value);
               }}
               placeholder="Search (email / prompt / meta...)"
-              style={{ ...inputStyle, flex: "1 1 320px" }}
+              className="input"
+              style={{ flex: "1 1 320px" }}
             />
 
             <select
@@ -169,7 +133,7 @@ export default function ChatLogsPage() {
                 setOffset(0);
                 setRole(e.target.value);
               }}
-              style={selectStyle}
+              className="select"
             >
               <option value="">All Roles</option>
               <option value="admin">Admin</option>
@@ -182,7 +146,7 @@ export default function ChatLogsPage() {
                 setOffset(0);
                 setEvent(e.target.value);
               }}
-              style={selectStyle}
+              className="select"
             >
               <option value="">All Events</option>
               <option value="chat">chat</option>
@@ -197,7 +161,7 @@ export default function ChatLogsPage() {
                 setOffset(0);
                 setLimit(parseInt(e.target.value, 10));
               }}
-              style={selectStyle}
+              className="select"
             >
               <option value="50">50</option>
               <option value="100">100</option>
@@ -205,18 +169,7 @@ export default function ChatLogsPage() {
               <option value="500">500</option>
             </select>
 
-            <button
-              onClick={fetchLogs}
-              disabled={loading}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid rgba(120,150,255,0.22)",
-                background: "rgba(255,255,255,0.04)",
-                color: "var(--text)",
-                cursor: "pointer",
-              }}
-            >
+            <button onClick={fetchLogs} disabled={loading} className="btn btn-primary">
               Search
             </button>
 
@@ -228,73 +181,60 @@ export default function ChatLogsPage() {
                 setOffset(0);
               }}
               disabled={loading}
-              style={{
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid rgba(120,150,255,0.12)",
-                background: "transparent",
-                color: "var(--text)",
-                cursor: "pointer",
-                opacity: 0.85,
-              }}
+              className="btn"
             >
               Clear
             </button>
           </div>
 
-          <div style={{ marginTop: 10, fontSize: 12, opacity: 0.8 }}>
+          <div style={{ marginTop: 10, fontSize: 12 }} className="muted">
             Matched: <b>{matched}</b>
           </div>
 
           {error && (
-            <div style={{ marginTop: 10, color: "#ff7b7b", fontSize: 13, whiteSpace: "pre-wrap" }}>
+            <div style={{ marginTop: 10, color: "var(--status-bad)", fontSize: 13, whiteSpace: "pre-wrap" }}>
               {error}
             </div>
           )}
         </div>
 
-        <div
-          style={{
-            borderRadius: 12,
-            border: "1px solid rgba(120,150,255,0.18)",
-            overflow: "hidden",
-            background: "rgba(0,0,0,0.20)",
-          }}
-        >
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <div className="card" style={{ overflow: "hidden" }}>
+          <div className="table-wrap">
+            <table className="table">
               <thead>
-                <tr style={{ textAlign: "left", background: "rgba(255,255,255,0.04)" }}>
-                  <th style={{ padding: 10, borderBottom: "1px solid rgba(120,150,255,0.12)" }}>Time</th>
-                  <th style={{ padding: 10, borderBottom: "1px solid rgba(120,150,255,0.12)" }}>User</th>
-                  <th style={{ padding: 10, borderBottom: "1px solid rgba(120,150,255,0.12)" }}>Role</th>
-                  <th style={{ padding: 10, borderBottom: "1px solid rgba(120,150,255,0.12)" }}>Event</th>
-                  <th style={{ padding: 10, borderBottom: "1px solid rgba(120,150,255,0.12)" }}>Prompt</th>
-                  <th style={{ padding: 10, borderBottom: "1px solid rgba(120,150,255,0.12)" }}>Latency</th>
+                <tr style={{ textAlign: "left" }}>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>Role</th>
+                  <th>Event</th>
+                  <th style={{ minWidth: 420 }}>Prompt</th>
+                  <th>Latency</th>
                 </tr>
               </thead>
               <tbody>
                 {items.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} style={{ padding: 14, opacity: 0.75 }}>
+                    <td colSpan={6} style={{ padding: 14 }} className="muted">
                       No logs found.
                     </td>
                   </tr>
                 )}
 
                 {items.map((it, idx) => (
-                  <tr key={idx} style={{ borderTop: "1px solid rgba(120,150,255,0.08)" }}>
-                    <td style={{ padding: 10, whiteSpace: "nowrap", opacity: 0.9 }}>{fmtTime(it.ts)}</td>
-                    <td style={{ padding: 10, whiteSpace: "nowrap" }}>{it.user_email || "-"}</td>
-                    <td style={{ padding: 10, whiteSpace: "nowrap" }}>{it.user_role || "-"}</td>
-                    <td style={{ padding: 10, whiteSpace: "nowrap" }}>{it.event || "-"}</td>
-                    <td style={{ padding: 10, minWidth: 420 }}>
-                      <div style={{ whiteSpace: "pre-wrap", opacity: 0.95 }}>
+                  <tr key={idx}>
+                    <td style={{ whiteSpace: "nowrap" }} className="muted">
+                      {fmtTime(it.ts)}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap" }}>{it.user_email || "-"}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{it.user_role || "-"}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{it.event || "-"}</td>
+                    <td style={{ minWidth: 420 }}>
+                      <div style={{ whiteSpace: "pre-wrap" }}>
                         {it.prompt ? it.prompt.slice(0, 500) : "-"}
                         {it.prompt && it.prompt.length > 500 ? "…" : ""}
                       </div>
                     </td>
-                    <td style={{ padding: 10, whiteSpace: "nowrap" }}>
+                    <td style={{ whiteSpace: "nowrap" }} className="muted">
                       {typeof it.latency_ms === "number" ? `${it.latency_ms}ms` : "-"}
                     </td>
                   </tr>
@@ -309,11 +249,10 @@ export default function ChatLogsPage() {
               justifyContent: "space-between",
               alignItems: "center",
               padding: 12,
-              borderTop: "1px solid rgba(120,150,255,0.12)",
-              background: "rgba(255,255,255,0.02)",
+              borderTop: "1px solid var(--card-border)",
             }}
           >
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
+            <div className="muted" style={{ fontSize: 12 }}>
               Showing {items.length} / {matched} (offset {offset})
             </div>
 
@@ -321,15 +260,7 @@ export default function ChatLogsPage() {
               <button
                 onClick={() => setOffset((v) => Math.max(0, v - limit))}
                 disabled={loading || offset === 0}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(120,150,255,0.18)",
-                  background: "transparent",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  opacity: offset === 0 ? 0.5 : 1,
-                }}
+                className="btn"
               >
                 ← Prev
               </button>
@@ -337,15 +268,7 @@ export default function ChatLogsPage() {
               <button
                 onClick={() => setOffset((v) => v + limit)}
                 disabled={loading || offset + limit >= matched}
-                style={{
-                  padding: "10px 14px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(120,150,255,0.18)",
-                  background: "transparent",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  opacity: offset + limit >= matched ? 0.5 : 1,
-                }}
+                className="btn"
               >
                 Next →
               </button>
@@ -353,8 +276,8 @@ export default function ChatLogsPage() {
           </div>
         </div>
 
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-          Endpoint: <span style={{ fontFamily: "monospace" }}>{API_BASE}/logs/list</span>
+        <div style={{ marginTop: 10, fontSize: 12 }} className="muted">
+          Endpoint: <span className="mono">{API_BASE}/logs/list</span>
         </div>
       </div>
     </div>

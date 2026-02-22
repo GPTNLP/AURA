@@ -15,14 +15,22 @@ export default function Sidebar() {
 
   useEffect(() => {
     localStorage.setItem(LS_SIDEBAR_COLLAPSED, collapsed ? "1" : "0");
+
     document.documentElement.style.setProperty(
       "--sidebar-width",
       collapsed ? "72px" : "240px"
     );
   }, [collapsed]);
 
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
+    `sidebar-link ${isActive ? "active" : ""}`;
+
+  const adminLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `sidebar-link admin-link ${isActive ? "active" : ""}`;
+
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
+      {/* ===== Top Section ===== */}
       <div className="sidebar-top">
         <div className="sidebar-brand">
           <h1 className="sidebar-title">AURA</h1>
@@ -42,47 +50,52 @@ export default function Sidebar() {
         </button>
       </div>
 
+      {/* ===== Navigation ===== */}
       <nav className="sidebar-nav">
+        {/* Core Section */}
         <div className="sidebar-section">
           {!collapsed && <span className="sidebar-section-title">Core</span>}
 
-          <NavLink to="/" end className="sidebar-link">
+          <NavLink to="/" end className={linkClass}>
             <span className="sidebar-link-text">Dashboard</span>
           </NavLink>
 
-          <NavLink to="/control" className="sidebar-link">
+          <NavLink to="/control" className={linkClass}>
             <span className="sidebar-link-text">Control</span>
           </NavLink>
 
-          <NavLink to="/camera" className="sidebar-link">
+          <NavLink to="/camera" className={linkClass}>
             <span className="sidebar-link-text">Camera</span>
           </NavLink>
         </div>
 
+        {/* AI System Section */}
         <div className="sidebar-section">
           {!collapsed && <span className="sidebar-section-title">AI System</span>}
 
-          <NavLink to="/bot" className="sidebar-link">
+          <NavLink to="/simulator" className={linkClass}>
             <span className="sidebar-link-text">Simulator</span>
           </NavLink>
 
-          <NavLink to="/files" className="sidebar-link">
+          <NavLink to="/files" className={linkClass}>
             <span className="sidebar-link-text">Files</span>
           </NavLink>
         </div>
 
+        {/* Admin Section */}
         {isAdmin && (
           <div className="sidebar-section">
             {!collapsed && <span className="sidebar-section-title">Admin</span>}
 
-            <NavLink to="/logs" className="sidebar-link admin-link">
+            <NavLink to="/logs" className={adminLinkClass}>
               <span className="sidebar-link-text">Chat Logs</span>
             </NavLink>
           </div>
         )}
 
+        {/* Bottom */}
         <div className="sidebar-bottom">
-          <NavLink to="/settings" className="sidebar-link">
+          <NavLink to="/settings" className={linkClass}>
             <span className="sidebar-link-text">Settings</span>
           </NavLink>
         </div>
