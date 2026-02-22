@@ -13,13 +13,31 @@ from lightrag_local import LightRAG, QueryParam
 router = APIRouter(tags=["database"])
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-STORAGE_DIR = os.path.join(BACKEND_DIR, "storage")
 
-# Your preferred layout:
-DOCUMENTS_DIR = os.path.join(STORAGE_DIR, "documents")
-RAG_ROOT_DIR = os.path.join(STORAGE_DIR, "databases")
+# -------------------------
+# Storage layout (env overridable)
+# -------------------------
+DEFAULT_STORAGE_DIR = os.path.join(BACKEND_DIR, "storage")
 
-DEFAULT_LLM = os.getenv("AURA_LLM_MODEL", "llama3.1:8b")
+STORAGE_DIR = os.path.abspath(
+    os.getenv("AURA_STORAGE_DIR", DEFAULT_STORAGE_DIR)
+    if os.path.isabs(os.getenv("AURA_STORAGE_DIR", "")) else
+    os.path.join(BACKEND_DIR, os.getenv("AURA_STORAGE_DIR", "storage"))
+)
+
+DOCUMENTS_DIR = os.path.abspath(
+    os.getenv("AURA_DOCUMENTS_DIR", os.path.join(STORAGE_DIR, "documents"))
+    if os.path.isabs(os.getenv("AURA_DOCUMENTS_DIR", "")) else
+    os.path.join(BACKEND_DIR, os.getenv("AURA_DOCUMENTS_DIR", os.path.join("storage", "documents")))
+)
+
+RAG_ROOT_DIR = os.path.abspath(
+    os.getenv("AURA_DATABASES_DIR", os.path.join(STORAGE_DIR, "databases"))
+    if os.path.isabs(os.getenv("AURA_DATABASES_DIR", "")) else
+    os.path.join(BACKEND_DIR, os.getenv("AURA_DATABASES_DIR", os.path.join("storage", "databases")))
+)
+
+DEFAULT_LLM = os.getenv("AURA_LLM_MODEL", "llama3.2:3b")
 DEFAULT_EMBED = os.getenv("AURA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_URL = os.getenv("AURA_OLLAMA_URL", "http://127.0.0.1:11434")
 
@@ -47,7 +65,7 @@ def _db_config_path(db_name: str) -> str:
 
 
 def _db_workdir(db_name: str) -> str:
-    # workdir == db folder (stores vdb_chunks.json)
+    # workdir == db folder (stores meta.json + embeddings.npy)
     return _db_dir(db_name)
 
 
@@ -307,12 +325,12 @@ async def build_database(req: BuildDBRequest):
     cfg["folders"] = folders
     _save_db_config(req.name, cfg)
 
-    # ✅ write once at the end (prevents Windows lock + much faster)
+    # ✅ write once at the end
     try:
         rag.flush()
     except Exception:
         pass
-    
+
     return {
         "ok": True,
         "status": "Database built",
