@@ -2,17 +2,21 @@ import os
 import time
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
 import cv2
 from dotenv import load_dotenv
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 ALLOWED_IPS = {ip.strip() for ip in os.getenv("ALLOWED_IPS", "").split(",") if ip.strip()}
 API_TOKEN = os.getenv("API_TOKEN", "")
+
+# CORS for MJPEG <img> + canvas snapshot
+# Must be explicit origins (NOT *) for best compatibility.
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 
 CAMERA_INDEX = os.getenv("CAMERA_INDEX", "0")
 CAMERA_FPS = int(os.getenv("CAMERA_FPS", "30"))
@@ -25,7 +29,8 @@ router = APIRouter(prefix="/camera", tags=["camera"])
 
 
 def get_client_ip(request: Request) -> str:
-    return request.client.host
+    # If you later sit behind a proxy, you may want to respect X-Forwarded-For here too.
+    return request.client.host if request.client else "unknown"
 
 
 def require_ip_allowlist(request: Request):
@@ -139,11 +144,49 @@ def _ensure_worker():
         _worker_started = True
 
 
+def _cors_headers_for_stream(request: Request) -> Dict[str, str]:
+    """
+    These headers are crucial so the MJPEG <img> can be drawn onto a canvas.
+    - We DO NOT return '*' because that can break when credentials are involved.
+    - We reflect only allowed origins.
+    """
+    origin = request.headers.get("origin", "")
+    headers: Dict[str, str] = {
+        "Cache-Control": "no-store",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        # Helps with some browser security models when embedding cross-origin.
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Vary": "Origin",
+    }
+
+    if not origin:
+        return headers
+
+    if ALLOWED_ORIGINS and origin in ALLOWED_ORIGINS:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+        headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    # If origin not allowed, we simply omit ACAO and browser will block canvas draw.
+
+    return headers
+
+
+@router.options("/stream")
+async def stream_options(request: Request):
+    # Some environments/proxies do preflight-like behavior; safe to include.
+    headers = _cors_headers_for_stream(request)
+    return Response(status_code=204, headers=headers)
+
+
 @router.get("/stream")
 async def stream(request: Request):
     require_ip_allowlist(request)
     require_camera_token(request)
     _ensure_worker()
+
+    headers = _cors_headers_for_stream(request)
 
     async def gen():
         # If worker hasn't produced frames yet, give it a moment
@@ -156,7 +199,6 @@ async def stream(request: Request):
             if ready:
                 break
             if time.time() - start > 3.0:
-                # Still no frame after 3s
                 break
             time.sleep(0.05)
 
@@ -181,7 +223,10 @@ async def stream(request: Request):
                 + b"\r\n"
             )
 
-            # If worker is updating, this just matches display speed
             time.sleep(1.0 / max(CAMERA_FPS, 1))
 
-    return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(
+        gen(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers=headers,
+    )
