@@ -76,5 +76,11 @@ def domain_allowed(email: str) -> bool:
     email = (email or "").strip().lower()
     if "@" not in email:
         return False
-    domain = email.split("@", 1)[1]
-    return domain in set(AUTH_ALLOWED_DOMAINS or [])
+    domain = email.split("@", 1)[1].strip().lower()
+
+    allowed = set((AUTH_ALLOWED_DOMAINS or []))
+    # If you forgot to set AUTH_ALLOWED_DOMAINS, default to tamu.edu for safety:
+    if not allowed:
+        allowed = {"tamu.edu"}
+
+    return domain in allowed

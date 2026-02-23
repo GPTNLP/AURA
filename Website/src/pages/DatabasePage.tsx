@@ -70,6 +70,7 @@ function containsText(hay: string, needle: string) {
 export default function DatabasePage() {
   const { token, user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const isTA = user?.role === "ta";
 
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState<
@@ -705,7 +706,9 @@ export default function DatabasePage() {
 
           <div className="badge" title="Role">
             Role:
-            <span className="db-role-pill">{isAdmin ? "ADMIN" : "USER"}</span>
+            <span className="db-role-pill">
+              {isAdmin ? "ADMIN" : isTA ? "TA" : "STUDENT"}
+            </span>
           </div>
         </div>
 

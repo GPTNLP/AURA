@@ -15,7 +15,7 @@ type ChatResponse = {
 };
 
 export default function SimulatorPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
 
   const [query, setQuery] = useState("");
   const [history, setHistory] = useState<ChatMsg[]>([]);
@@ -30,7 +30,6 @@ export default function SimulatorPage() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Use same base logic as DatabasePage to avoid mismatch
   const API_URL = useMemo(() => {
     return (
       (import.meta.env.VITE_AUTH_API_BASE as string | undefined)?.trim() ||
@@ -39,24 +38,52 @@ export default function SimulatorPage() {
     );
   }, []);
 
-  // ✅ auth headers (same pattern as DatabasePage)
   const authHeaders = useMemo(() => {
     const h = new Headers();
     if (token) h.set("Authorization", `Bearer ${token}`);
     return h;
   }, [token]);
 
+  const writeLog = async (payload: {
+    event: string;
+    prompt?: string;
+    response_preview?: string;
+    latency_ms?: number;
+    meta?: Record<string, any>;
+  }) => {
+    if (!token) return;
+    try {
+      const headers = new Headers(authHeaders);
+      headers.set("Content-Type", "application/json");
+
+      await fetch(`${API_URL}/logs/write`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          event: payload.event,
+          user_email: user?.email,
+          user_role: user?.role,
+          prompt: payload.prompt,
+          response_preview: payload.response_preview,
+          model: "rag-chat",
+          latency_ms: payload.latency_ms,
+          meta: payload.meta || {},
+        }),
+      });
+    } catch {
+      // swallow
+    }
+  };
+
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
 
-  // Auto-scroll chat
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [history, loading]);
 
-  // Health ping (less spam + pause when hidden)
   useEffect(() => {
     let timer: any = null;
     let cancelled = false;
@@ -92,7 +119,6 @@ export default function SimulatorPage() {
     };
   }, [API_URL]);
 
-  // Load databases
   useEffect(() => {
     let cancelled = false;
 
@@ -104,7 +130,6 @@ export default function SimulatorPage() {
         if (cancelled) return;
 
         setDatabases(list);
-
         setActiveDb((prev) => {
           if (prev && list.includes(prev)) return prev;
           return list[0] || "";
@@ -144,9 +169,12 @@ export default function SimulatorPage() {
     setQuery("");
     setLoading(true);
 
+    const t0 = performance.now();
+
     try {
       const headers = new Headers(authHeaders);
       headers.set("Content-Type", "application/json");
+
       const res = await fetch(`${API_URL}/api/databases/chat`, {
         method: "POST",
         headers,
@@ -173,12 +201,31 @@ export default function SimulatorPage() {
 
       const sources = Array.isArray(data?.sources) ? data.sources : [];
       setHistory((prev) => [...prev, { role: "ai", content: answer, sources }]);
+
+      const latency = Math.round(performance.now() - t0);
+
+      await writeLog({
+        event: "chat",
+        prompt: q,
+        response_preview: answer.slice(0, 600),
+        latency_ms: latency,
+        meta: { db: activeDb, sources_count: sources.length },
+      });
     } catch (err: any) {
       if (err?.name === "AbortError") return;
-      setHistory((prev) => [
-        ...prev,
-        { role: "error", content: `Simulation Error: ${err?.message || String(err)}` },
-      ]);
+
+      const msg = `Simulation Error: ${err?.message || String(err)}`;
+      setHistory((prev) => [...prev, { role: "error", content: msg }]);
+
+      const latency = Math.round(performance.now() - t0);
+
+      await writeLog({
+        event: "chat_error",
+        prompt: q,
+        response_preview: msg.slice(0, 600),
+        latency_ms: latency,
+        meta: { db: activeDb },
+      });
     } finally {
       setLoading(false);
     }
@@ -200,7 +247,6 @@ export default function SimulatorPage() {
           boxShadow: "var(--shadow)",
         }}
       >
-        {/* Header */}
         <div
           style={{
             padding: 18,
@@ -259,7 +305,6 @@ export default function SimulatorPage() {
           </span>
         </div>
 
-        {/* DB selector */}
         <div
           style={{
             padding: 14,
@@ -322,7 +367,6 @@ export default function SimulatorPage() {
           )}
         </div>
 
-        {/* Chat */}
         <div
           ref={scrollRef}
           style={{
@@ -426,7 +470,6 @@ export default function SimulatorPage() {
           )}
         </div>
 
-        {/* Input */}
         <div
           style={{
             padding: 14,

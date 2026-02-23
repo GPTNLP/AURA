@@ -7,7 +7,10 @@ const LS_SIDEBAR_COLLAPSED = "aura-sidebar-collapsed";
 
 export default function Sidebar() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+
+  const role = user?.role;
+  const isAdmin = role === "admin";
+  const isTA = role === "ta";
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     return localStorage.getItem(LS_SIDEBAR_COLLAPSED) === "1";
@@ -28,15 +31,15 @@ export default function Sidebar() {
   const adminLinkClass = ({ isActive }: { isActive: boolean }) =>
     `sidebar-link admin-link ${isActive ? "active" : ""}`;
 
+  const portalLabel = isAdmin ? "Administrator" : isTA ? "TA Portal" : "Student Portal";
+
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       {/* ===== Top Section ===== */}
       <div className="sidebar-top">
         <div className="sidebar-brand">
           <h1 className="sidebar-title">AURA</h1>
-          <p className="sidebar-subtitle">
-            {isAdmin ? "Administrator" : "Student Portal"}
-          </p>
+          <p className="sidebar-subtitle">{portalLabel}</p>
         </div>
 
         <button
@@ -60,9 +63,12 @@ export default function Sidebar() {
             <span className="sidebar-link-text">Dashboard</span>
           </NavLink>
 
-          <NavLink to="/control" className={linkClass}>
-            <span className="sidebar-link-text">Control</span>
-          </NavLink>
+          {/* Control is admin-only (matches AppRouter) */}
+          {isAdmin && (
+            <NavLink to="/control" className={linkClass}>
+              <span className="sidebar-link-text">Control</span>
+            </NavLink>
+          )}
 
           <NavLink to="/camera" className={linkClass}>
             <span className="sidebar-link-text">Camera</span>
@@ -77,9 +83,12 @@ export default function Sidebar() {
             <span className="sidebar-link-text">Simulator</span>
           </NavLink>
 
-          <NavLink to="/files" className={linkClass}>
-            <span className="sidebar-link-text">Database</span>
-          </NavLink>
+          {/* Database = admin + TA only */}
+          {(isAdmin || isTA) && (
+            <NavLink to="/database" className={linkClass}>
+              <span className="sidebar-link-text">Database</span>
+            </NavLink>
+          )}
         </div>
 
         {/* Admin Section */}
@@ -90,11 +99,16 @@ export default function Sidebar() {
             <NavLink to="/logs" className={adminLinkClass}>
               <span className="sidebar-link-text">Chat Logs</span>
             </NavLink>
+
+            <NavLink to="/admin/ta" className={adminLinkClass}>
+              <span className="sidebar-link-text">TA Manager</span>
+            </NavLink>
           </div>
         )}
 
         {/* Bottom */}
         <div className="sidebar-bottom">
+          {/* ✅ Settings now available to ALL logged-in users */}
           <NavLink to="/settings" className={linkClass}>
             <span className="sidebar-link-text">Settings</span>
           </NavLink>

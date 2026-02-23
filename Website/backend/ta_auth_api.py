@@ -1,4 +1,4 @@
-# backend/student_auth_api.py
+# backend/ta_auth_api.py
 import os
 import time
 import random
@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from security import require_ip_allowlist, domain_allowed
 from security_tokens import mint_app_token
 from otp_store import OTPStore, hash_code
+from ta_store import is_ta
 
 # Local dev only
 env_path = Path(__file__).resolve().parents[1] / ".env"
@@ -27,20 +28,20 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 
-STUDENT_OTP_TTL_SECONDS = int(os.getenv("STUDENT_OTP_TTL_SECONDS", "300"))  # 5 min
-STUDENT_MAX_OTP_ATTEMPTS = int(os.getenv("STUDENT_MAX_OTP_ATTEMPTS", "6"))
+TA_OTP_TTL_SECONDS = int(os.getenv("TA_OTP_TTL_SECONDS", "300"))  # 5 min
+TA_MAX_OTP_ATTEMPTS = int(os.getenv("TA_MAX_OTP_ATTEMPTS", "6"))
 
 COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "aura_token")
 COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax")
 COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "")
 
-router = APIRouter(prefix="/auth/student", tags=["student-auth"])
-otp_store = OTPStore(prefix="studentotp")
+router = APIRouter(prefix="/auth/ta", tags=["ta-auth"])
+otp_store = OTPStore(prefix="taotp")
 
-class StudentStartReq(BaseModel):
+class TaStartReq(BaseModel):
     email: str
 
-class StudentVerifyReq(BaseModel):
+class TaVerifyReq(BaseModel):
     email: str
     otp: str
 
@@ -55,12 +56,12 @@ def _send_otp_email(to_email: str, code: str):
         raise HTTPException(status_code=500, detail="SMTP not configured")
 
     msg = EmailMessage()
-    msg["Subject"] = "AURA Student Login Code"
+    msg["Subject"] = "AURA TA Login Code"
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg.set_content(
-        f"Your AURA login code is: {code}\n\n"
-        f"This code expires in {max(1, STUDENT_OTP_TTL_SECONDS//60)} minutes.\n"
+        f"Your AURA TA login code is: {code}\n\n"
+        f"This code expires in {max(1, TA_OTP_TTL_SECONDS//60)} minutes.\n"
         f"If you did not request this, ignore this email."
     )
 
@@ -70,35 +71,39 @@ def _send_otp_email(to_email: str, code: str):
         server.send_message(msg)
 
 @router.post("/start")
-async def start(data: StudentStartReq, request: Request):
+async def start(data: TaStartReq, request: Request):
     require_ip_allowlist(request)
 
     email = (data.email or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Enter your TAMU email")
 
-    # ✅ only @tamu.edu (controlled by AUTH_ALLOWED_DOMAINS)
     if not domain_allowed(email):
         raise HTTPException(status_code=403, detail="Only @tamu.edu emails are allowed")
 
+    # ✅ MUST be approved as TA before even receiving OTP
+    if not is_ta(email):
+        raise HTTPException(status_code=403, detail="Not approved as a TA. Contact admin.")
+
     code = f"{random.randint(100000, 999999)}"
-    otp_store.set(email=email, code=code, ttl_seconds=STUDENT_OTP_TTL_SECONDS)
+    otp_store.set(email=email, code=code, ttl_seconds=TA_OTP_TTL_SECONDS)
     _send_otp_email(email, code)
 
-    return {"message": "OTP sent", "otp_expires_in": STUDENT_OTP_TTL_SECONDS}
+    return {"message": "OTP sent", "otp_expires_in": TA_OTP_TTL_SECONDS}
 
 @router.post("/verify")
-async def verify(data: StudentVerifyReq, request: Request, response: Response):
+async def verify(data: TaVerifyReq, request: Request, response: Response):
     require_ip_allowlist(request)
 
     email = (data.email or "").strip().lower()
     otp = (data.otp or "").strip()
 
-    if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Enter your TAMU email")
-
     if not domain_allowed(email):
         raise HTTPException(status_code=403, detail="Only @tamu.edu emails are allowed")
+
+    # ✅ MUST be approved as TA
+    if not is_ta(email):
+        raise HTTPException(status_code=403, detail="Not approved as a TA. Contact admin.")
 
     rec = otp_store.get(email)
     if not rec:
@@ -109,7 +114,7 @@ async def verify(data: StudentVerifyReq, request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid code")
 
     attempts = otp_store.incr_attempts(email)
-    if attempts > STUDENT_MAX_OTP_ATTEMPTS:
+    if attempts > TA_MAX_OTP_ATTEMPTS:
         otp_store.delete(email)
         raise HTTPException(status_code=429, detail="Too many attempts")
 
@@ -118,8 +123,7 @@ async def verify(data: StudentVerifyReq, request: Request, response: Response):
 
     otp_store.delete(email)
 
-    # ✅ Student login ALWAYS mints student role
-    result = mint_app_token(email=email, role="student")
+    result = mint_app_token(email=email, role="ta")
     token = result["token"]
 
     secure_cookie = _should_secure_cookie(request)

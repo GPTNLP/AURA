@@ -8,11 +8,24 @@ type TaRow = {
 };
 
 const API_BASE =
-  import.meta.env.VITE_AUTH_API_BASE ||
-  import.meta.env.VITE_CAMERA_API_BASE ||
+  (import.meta.env.VITE_AUTH_API_BASE as string | undefined) ||
+  (import.meta.env.VITE_CAMERA_API_BASE as string | undefined) ||
   "http://127.0.0.1:9000";
 
-export default function TAManagerPage() {
+async function readErr(res: Response) {
+  try {
+    const j = await res.json();
+    return j?.detail || j?.message || (await res.text());
+  } catch {
+    try {
+      return (await res.text()) || `Request failed (${res.status})`;
+    } catch {
+      return `Request failed (${res.status})`;
+    }
+  }
+}
+
+export default function TAManagePage() {
   const { token } = useAuth();
   const [items, setItems] = useState<TaRow[]>([]);
   const [email, setEmail] = useState("");
@@ -22,39 +35,50 @@ export default function TAManagerPage() {
   const headers = useMemo(() => {
     return {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
   }, [token]);
 
   const load = async () => {
+    if (!token) return;
     setErr(null);
+
     const res = await fetch(`${API_BASE}/admin/ta/list`, { headers });
     if (!res.ok) {
-      setErr(await res.text());
+      setErr(await readErr(res));
+      setItems([]);
       return;
     }
-    const data = await res.json();
-    setItems(data.items || []);
+
+    const data = await res.json().catch(() => null);
+    setItems(Array.isArray(data?.items) ? data.items : []);
   };
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [token]);
 
   const addTa = async () => {
+    if (!token) return;
     setErr(null);
     setLoading(true);
+
     try {
       const e = email.trim().toLowerCase();
+      if (!e) throw new Error("Enter an email");
+
       const res = await fetch(`${API_BASE}/admin/ta/add`, {
         method: "POST",
         headers,
         body: JSON.stringify({ email: e }),
       });
-      if (!res.ok) throw new Error((await res.text()) || "Failed to add TA");
+
+      if (!res.ok) throw new Error(await readErr(res));
+
       setEmail("");
-      await load();
+      const data = await res.json().catch(() => null);
+      setItems(Array.isArray(data?.items) ? data.items : []);
     } catch (ex: any) {
       setErr(ex?.message || "Failed to add TA");
     } finally {
@@ -63,16 +87,21 @@ export default function TAManagerPage() {
   };
 
   const removeTa = async (taEmail: string) => {
+    if (!token) return;
     setErr(null);
     setLoading(true);
+
     try {
       const res = await fetch(`${API_BASE}/admin/ta/remove`, {
         method: "POST",
         headers,
         body: JSON.stringify({ email: taEmail }),
       });
-      if (!res.ok) throw new Error((await res.text()) || "Failed to remove TA");
-      await load();
+
+      if (!res.ok) throw new Error(await readErr(res));
+
+      const data = await res.json().catch(() => null);
+      setItems(Array.isArray(data?.items) ? data.items : []);
     } catch (ex: any) {
       setErr(ex?.message || "Failed to remove TA");
     } finally {
@@ -88,6 +117,15 @@ export default function TAManagerPage() {
       return "";
     }
   };
+
+  if (!token) {
+    return (
+      <div style={{ padding: 16 }}>
+        <h2 style={{ margin: 0 }}>TA Manager</h2>
+        <p style={{ marginTop: 6, opacity: 0.8 }}>Please login as an admin.</p>
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: 16 }}>

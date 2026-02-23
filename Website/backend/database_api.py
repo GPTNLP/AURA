@@ -8,8 +8,9 @@ from pydantic import BaseModel
 from pypdf import PdfReader
 
 from lightrag_local import LightRAG, QueryParam
-from security import require_auth
+from security import require_auth, require_ip_allowlist
 from aura_db import init_db, doc_set_owner, doc_get_owner, doc_delete_owner, doc_move_owner
+from doc_owners import set_owner, get_owner, delete_owner, move_owner
 
 router = APIRouter(tags=["database"])
 init_db()
@@ -32,6 +33,36 @@ os.makedirs(RAG_ROOT_DIR, exist_ok=True)
 # ---------------------------
 # Auth helpers
 # ---------------------------
+def _can_use_database(role: str) -> bool:
+    return role in ("admin", "ta")
+
+def _require_db_user(request: Request):
+    require_ip_allowlist(request)
+    payload = require_auth(request)
+    role = payload.get("role")
+    if not _can_use_database(role):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    return payload
+
+def _require_admin(request: Request):
+    require_ip_allowlist(request)
+    payload = require_auth(request)
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return payload
+
+def _require_can_modify_file(payload: dict, rel_path: str):
+    role = payload.get("role")
+    email = (payload.get("sub") or "").strip().lower()
+
+    if role == "admin":
+        return
+
+    # TA: only their own files (never folders)
+    owner = (get_owner(rel_path) or "").strip().lower()
+    if not owner or owner != email:
+        raise HTTPException(status_code=403, detail="You can only modify files you uploaded")
+    
 def _role(payload: Dict[str, Any]) -> str:
     return str(payload.get("role") or "").lower()
 
@@ -310,6 +341,95 @@ def database_stats(db_name: str, request: Request):
         ollama_base_url=str(cfg.get("ollama_url") or OLLAMA_URL),
     )
     return {"db": db_name, "config": cfg, "stats": rag.stats()}
+
+@router.get("/api/documents/tree")
+def documents_tree(request: Request):
+    _require_db_user(request)
+    return {
+        "root": "documents",
+        "path": DOCUMENTS_DIR,
+        "tree": _walk_tree(DOCUMENTS_DIR),
+    }
+
+@router.post("/api/documents/mkdir")
+def documents_mkdir(req: MkdirRequest, request: Request):
+    _require_db_user(request)
+    full = _safe_join(DOCUMENTS_DIR, req.path)
+    os.makedirs(full, exist_ok=True)
+    return {"ok": True, "created": req.path}
+
+@router.post("/api/documents/upload")
+async def documents_upload(request: Request, path: str = "", files: List[UploadFile] = File(...)):
+    payload = _require_db_user(request)
+
+    dest_dir = _safe_join(DOCUMENTS_DIR, path)
+    os.makedirs(dest_dir, exist_ok=True)
+
+    saved = 0
+    uploader = (payload.get("sub") or "").strip().lower()
+
+    for f in files:
+        name = os.path.basename(f.filename or "file")
+        out = os.path.join(dest_dir, name)
+        with open(out, "wb") as w:
+            w.write(await f.read())
+        saved += 1
+
+        # ✅ ownership tracked by RELATIVE path (from DOCUMENTS_DIR)
+        rel = os.path.relpath(out, DOCUMENTS_DIR).replace("\\", "/")
+        set_owner(rel, uploader)
+
+    return {"ok": True, "saved": saved, "path": path}
+
+@router.delete("/api/documents/delete")
+def documents_delete(request: Request, path: str):
+    payload = _require_db_user(request)
+    full = _safe_join(DOCUMENTS_DIR, path)
+
+    if not os.path.exists(full):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # TA cannot delete folders
+    if os.path.isdir(full) and payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="TAs cannot delete folders")
+
+    # If file + TA => must own it
+    if os.path.isfile(full) and payload.get("role") != "admin":
+        _require_can_modify_file(payload, path)
+
+    if os.path.isdir(full):
+        shutil.rmtree(full)
+    else:
+        os.remove(full)
+        delete_owner(path)
+
+    return {"ok": True, "deleted": path}
+
+@router.post("/api/documents/move")
+def documents_move(req: MoveRequest, request: Request):
+    payload = _require_db_user(request)
+
+    src = _safe_join(DOCUMENTS_DIR, req.src)
+    dst = _safe_join(DOCUMENTS_DIR, req.dst)
+
+    if not os.path.exists(src):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # TA cannot move folders
+    if os.path.isdir(src) and payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="TAs cannot move folders")
+
+    # TA file move => must own
+    if os.path.isfile(src) and payload.get("role") != "admin":
+        _require_can_modify_file(payload, req.src)
+
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.move(src, dst)
+
+    if os.path.isfile(dst):
+        move_owner(req.src, req.dst)
+
+    return {"ok": True, "src": req.src, "dst": req.dst}
 
 @router.post("/api/databases/build")
 async def build_database(req: BuildDBRequest, request: Request):
