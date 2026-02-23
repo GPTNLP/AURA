@@ -1,4 +1,3 @@
-# backend/database_api.py
 import os
 import json
 import shutil
@@ -14,28 +13,12 @@ router = APIRouter(tags=["database"])
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# -------------------------
-# Storage layout (env overridable)
-# -------------------------
-DEFAULT_STORAGE_DIR = os.path.join(BACKEND_DIR, "storage")
+# configurable roots (relative to BACKEND_DIR unless absolute)
+DOCS_REL = os.getenv("AURA_DOCS_DIR", "storage/documents")
+DB_REL = os.getenv("AURA_DB_DIR", "storage/databases")
 
-STORAGE_DIR = os.path.abspath(
-    os.getenv("AURA_STORAGE_DIR", DEFAULT_STORAGE_DIR)
-    if os.path.isabs(os.getenv("AURA_STORAGE_DIR", "")) else
-    os.path.join(BACKEND_DIR, os.getenv("AURA_STORAGE_DIR", "storage"))
-)
-
-DOCUMENTS_DIR = os.path.abspath(
-    os.getenv("AURA_DOCUMENTS_DIR", os.path.join(STORAGE_DIR, "documents"))
-    if os.path.isabs(os.getenv("AURA_DOCUMENTS_DIR", "")) else
-    os.path.join(BACKEND_DIR, os.getenv("AURA_DOCUMENTS_DIR", os.path.join("storage", "documents")))
-)
-
-RAG_ROOT_DIR = os.path.abspath(
-    os.getenv("AURA_DATABASES_DIR", os.path.join(STORAGE_DIR, "databases"))
-    if os.path.isabs(os.getenv("AURA_DATABASES_DIR", "")) else
-    os.path.join(BACKEND_DIR, os.getenv("AURA_DATABASES_DIR", os.path.join("storage", "databases")))
-)
+DOCUMENTS_DIR = DOCS_REL if os.path.isabs(DOCS_REL) else os.path.join(BACKEND_DIR, DOCS_REL)
+RAG_ROOT_DIR = DB_REL if os.path.isabs(DB_REL) else os.path.join(BACKEND_DIR, DB_REL)
 
 DEFAULT_LLM = os.getenv("AURA_LLM_MODEL", "llama3.2:3b")
 DEFAULT_EMBED = os.getenv("AURA_EMBED_MODEL", "nomic-embed-text")
@@ -65,7 +48,6 @@ def _db_config_path(db_name: str) -> str:
 
 
 def _db_workdir(db_name: str) -> str:
-    # workdir == db folder (stores meta.json + embeddings.npy)
     return _db_dir(db_name)
 
 
@@ -132,21 +114,18 @@ def _walk_tree(root: str) -> Dict[str, Any]:
     return build(root)
 
 
-# -------------------------
-# Models
-# -------------------------
 class MkdirRequest(BaseModel):
-    path: str  # relative to DOCUMENTS_DIR
+    path: str
 
 
 class MoveRequest(BaseModel):
-    src: str   # relative to DOCUMENTS_DIR
-    dst: str   # relative to DOCUMENTS_DIR
+    src: str
+    dst: str
 
 
 class CreateDBRequest(BaseModel):
     name: str
-    folders: List[str] = []  # relative to DOCUMENTS_DIR
+    folders: List[str] = []
 
 
 class BuildDBRequest(BaseModel):
@@ -160,9 +139,6 @@ class ChatRequest(BaseModel):
     query: str
 
 
-# -------------------------
-# Documents endpoints
-# -------------------------
 @router.get("/api/documents/tree")
 def documents_tree():
     return {
@@ -216,9 +192,6 @@ def documents_move(req: MoveRequest):
     return {"ok": True, "src": req.src, "dst": req.dst}
 
 
-# -------------------------
-# Databases endpoints
-# -------------------------
 @router.get("/api/databases")
 def list_databases():
     out = []
@@ -305,10 +278,7 @@ async def build_database(req: BuildDBRequest):
 
     for path in sorted(all_files):
         ext = os.path.splitext(path)[1].lower()
-        if ext == ".pdf":
-            text = _read_pdf(path)
-        else:
-            text = _read_text(path)
+        text = _read_pdf(path) if ext == ".pdf" else _read_text(path)
 
         if not text.strip():
             skipped_files += 1
@@ -325,7 +295,6 @@ async def build_database(req: BuildDBRequest):
     cfg["folders"] = folders
     _save_db_config(req.name, cfg)
 
-    # ✅ write once at the end
     try:
         rag.flush()
     except Exception:

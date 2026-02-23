@@ -1,4 +1,3 @@
-# backend/lightrag_local.py
 from __future__ import annotations
 
 import os
@@ -11,21 +10,18 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import urllib.request
 
+import faiss
 from rank_bm25 import BM25Okapi
 
 
-# -------------------------
-# Query params
-# -------------------------
+AURA_OLLAMA_TIMEOUT_S = float(os.getenv("AURA_OLLAMA_TIMEOUT_S", "600"))
+
 @dataclass
 class QueryParam:
     mode: str = "hybrid"   # "vector" | "bm25" | "hybrid"
     top_k: int = 8
 
 
-# -------------------------
-# Helpers
-# -------------------------
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -42,7 +38,7 @@ def _load_json(path: str, default):
         return default
 
 
-def _save_json_atomic(path: str, obj):
+def _save_json(path: str, obj):
     _safe_mkdir(os.path.dirname(path))
     tmp = f"{path}.tmp"
     data = json.dumps(obj, ensure_ascii=False, indent=2)
@@ -52,15 +48,14 @@ def _save_json_atomic(path: str, obj):
 
 
 def _normalize(v: np.ndarray) -> np.ndarray:
-    v = np.asarray(v, dtype=np.float32)
-    norm = float(np.linalg.norm(v)) + 1e-12
+    norm = np.linalg.norm(v) + 1e-12
     return (v / norm).astype(np.float32)
 
 
 def _tokenize(s: str) -> List[str]:
     s = (s or "").lower()
-    out = []
-    word = []
+    out: List[str] = []
+    word: List[str] = []
     for ch in s:
         if ch.isalnum():
             word.append(ch)
@@ -73,9 +68,6 @@ def _tokenize(s: str) -> List[str]:
     return out
 
 
-# -------------------------
-# Ollama HTTP client (with timeouts)
-# -------------------------
 class OllamaClient:
     def __init__(self, base_url: str, embed_model: str, llm_model: str):
         self.base_url = (base_url or "http://127.0.0.1:11434").rstrip("/")
@@ -95,7 +87,7 @@ class OllamaClient:
             raw = resp.read().decode("utf-8", errors="ignore")
             return json.loads(raw) if raw else {}
 
-    async def embed(self, text: str, timeout_s: float = 60.0) -> np.ndarray:
+    async def embed(self, text: str, timeout_s: float = 30.0) -> np.ndarray:
         payload = {"model": self.embed_model, "prompt": text}
         try:
             out = await asyncio.to_thread(self._post_json, "/api/embeddings", payload, timeout_s)
@@ -107,11 +99,11 @@ class OllamaClient:
             raise RuntimeError("Ollama embeddings returned no embedding vector.")
         return np.array(emb, dtype=np.float32)
 
-    async def generate(self, prompt: str, system: str = "", timeout_s: float = 180.0) -> str:
+    async def generate(self, prompt: str, system: str = "", timeout_s: float = 600.0) -> str:
         payload = {
             "model": self.llm_model,
             "prompt": prompt,
-            "system": system,        # ✅ include system in request
+            "system": system,
             "stream": False,
             "options": {
                 "temperature": 0.2,
@@ -130,14 +122,12 @@ class OllamaClient:
         return txt.strip()
 
 
-# -------------------------
-# LightRAG persistent store (NumPy cosine + BM25)
-# -------------------------
 class LightRAG:
     """
     Persistent store in working_dir:
       - meta.json         (rows: id/text/meta)
-      - embeddings.npy    (float32 normalized vectors)
+      - embeddings.npy    (float32 normalized)
+      - faiss.index       (IndexFlatIP over normalized vectors)
     """
 
     def __init__(
@@ -152,6 +142,7 @@ class LightRAG:
 
         self.meta_path = os.path.join(self.working_dir, "meta.json")
         self.emb_path = os.path.join(self.working_dir, "embeddings.npy")
+        self.index_path = os.path.join(self.working_dir, "faiss.index")
 
         self.client = OllamaClient(
             base_url=ollama_base_url,
@@ -159,13 +150,9 @@ class LightRAG:
             llm_model=llm_model_name,
         )
 
-        # rows: [{"id":..., "text":..., "meta":...}]
         self._rows: List[Dict[str, Any]] = _load_json(self.meta_path, default=[])
-
-        # embeddings: (N, D) normalized float32
         self._emb: Optional[np.ndarray] = None
-
-        # bm25
+        self._index: Optional[faiss.Index] = None
         self._bm25: Optional[BM25Okapi] = None
         self._bm25_tokens: List[List[str]] = []
 
@@ -174,30 +161,35 @@ class LightRAG:
     def _load_store(self):
         if os.path.exists(self.emb_path):
             try:
-                self._emb = np.load(self.emb_path).astype(np.float32)
+                self._emb = np.load(self.emb_path)
             except Exception:
                 self._emb = None
 
-        # if mismatch, discard embeddings
-        if self._emb is None or self._emb.ndim != 2 or self._emb.shape[0] != len(self._rows):
+        if self._emb is not None and self._emb.ndim == 2 and self._emb.shape[0] == len(self._rows):
+            dim = int(self._emb.shape[1])
+            self._index = faiss.IndexFlatIP(dim)
+            self._index.add(self._emb.astype(np.float32))
+        else:
             self._emb = None
+            self._index = None
 
-        # build bm25
         self._bm25_tokens = [_tokenize(r.get("text", "")) for r in self._rows]
         self._bm25 = BM25Okapi(self._bm25_tokens) if self._bm25_tokens else None
 
     def flush(self):
-        _save_json_atomic(self.meta_path, self._rows)
+        _save_json(self.meta_path, self._rows)
         if self._emb is not None:
             np.save(self.emb_path, self._emb.astype(np.float32))
+        if self._index is not None:
+            faiss.write_index(self._index, self.index_path)
 
     def reset(self):
         self._rows = []
         self._emb = None
+        self._index = None
         self._bm25 = None
         self._bm25_tokens = []
-
-        for p in [self.meta_path, self.emb_path]:
+        for p in [self.meta_path, self.emb_path, self.index_path]:
             try:
                 if os.path.exists(p):
                     os.remove(p)
@@ -205,14 +197,14 @@ class LightRAG:
                 pass
 
     def stats(self) -> Dict[str, Any]:
+        # keep key name "vdb_path" so your frontend doesn't need changes
         return {
             "chunk_count": len(self._rows),
-            "vdb_path": self.working_dir,   # ✅ your frontend expects vdb_path
+            "vdb_path": self.working_dir,
         }
 
     async def ainsert(self, text: str, meta: Optional[Dict[str, Any]] = None):
         meta = meta or {}
-
         emb = await self.client.embed(text)
         emb = _normalize(emb)
 
@@ -221,37 +213,35 @@ class LightRAG:
 
         if self._emb is None:
             self._emb = emb.reshape(1, -1)
+            dim = int(self._emb.shape[1])
+            self._index = faiss.IndexFlatIP(dim)
+            self._index.add(self._emb)
         else:
             self._emb = np.vstack([self._emb, emb.reshape(1, -1)])
+            assert self._index is not None
+            self._index.add(emb.reshape(1, -1))
 
-        # BM25 rebuild (fine for your scale)
         self._bm25_tokens = [_tokenize(r.get("text", "")) for r in self._rows]
         self._bm25 = BM25Okapi(self._bm25_tokens) if self._bm25_tokens else None
 
     def _search_vector(self, q_emb: np.ndarray, top_k: int) -> List[Tuple[int, float]]:
-        if self._emb is None or len(self._rows) == 0:
+        if self._index is None or self._emb is None or len(self._rows) == 0:
             return []
-
-        q = _normalize(q_emb).reshape(1, -1)      # (1, D)
-        # cosine similarity since both normalized
-        sims = (self._emb @ q.T).reshape(-1)      # (N,)
-        k = max(1, int(top_k))
-        if sims.shape[0] <= k:
-            idxs = np.argsort(-sims)
-        else:
-            # partial topk (faster)
-            idxs = np.argpartition(-sims, kth=k-1)[:k]
-            idxs = idxs[np.argsort(-sims[idxs])]
-
-        return [(int(i), float(sims[i])) for i in idxs]
+        q_emb = _normalize(q_emb).reshape(1, -1)
+        scores, idxs = self._index.search(q_emb, max(1, int(top_k)))
+        out: List[Tuple[int, float]] = []
+        for i, s in zip(idxs[0], scores[0]):
+            if i < 0:
+                continue
+            out.append((int(i), float(s)))  # cosine sim
+        return out
 
     def _search_bm25(self, query: str, top_k: int) -> List[Tuple[int, float]]:
         if self._bm25 is None or len(self._rows) == 0:
             return []
         toks = _tokenize(query)
         scores = self._bm25.get_scores(toks)
-        k = max(1, int(top_k))
-        idxs = np.argsort(-scores)[:k]
+        idxs = np.argsort(-scores)[: max(1, int(top_k))]
         return [(int(i), float(scores[i])) for i in idxs]
 
     async def aquery(self, query: str, param: Optional[QueryParam] = None) -> Dict[str, Any]:
@@ -266,30 +256,21 @@ class LightRAG:
 
         if mode in ("vector", "hybrid"):
             q_emb = await self.client.embed(query)
-            for idx, score in self._search_vector(q_emb, top_k=top_k * 3):
+            for idx, score in self._search_vector(q_emb, top_k=top_k * 2):
                 candidates.setdefault(idx, {})
-                candidates[idx]["vec"] = score  # cosine sim ~[-1..1] usually [0..1] for embeddings
+                candidates[idx]["vec"] = score
 
         if mode in ("bm25", "hybrid"):
-            for idx, score in self._search_bm25(query, top_k=top_k * 3):
+            for idx, score in self._search_bm25(query, top_k=top_k * 2):
                 candidates.setdefault(idx, {})
                 candidates[idx]["bm25"] = score
 
-        # combine scores
         scored: List[Tuple[float, int]] = []
         for idx, d in candidates.items():
-            vec = float(d.get("vec", 0.0))
-            bm = float(d.get("bm25", 0.0))
-            # squash bm25 so it doesn’t dominate
+            vec = d.get("vec", 0.0)
+            bm = d.get("bm25", 0.0)
             bm_norm = bm / (abs(bm) + 8.0)
-
-            if mode == "hybrid":
-                total = (0.75 * vec) + (0.25 * bm_norm)
-            elif mode == "vector":
-                total = vec
-            else:
-                total = bm_norm
-
+            total = (0.75 * vec) + (0.25 * bm_norm) if mode == "hybrid" else (vec if mode == "vector" else bm_norm)
             scored.append((float(total), int(idx)))
 
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -318,6 +299,6 @@ class LightRAG:
             "If the context doesn't contain the answer, say you don't have enough information."
         )
         prompt = f"CONTEXT:\n{context}\n\nQUESTION:\n{query}\n\nANSWER:"
-        answer = await self.client.generate(prompt=prompt, system=system, timeout_s=180.0)
+        answer = await self.client.generate(prompt=prompt, system=system, timeout_s=AURA_OLLAMA_TIMEOUT_S)
 
         return {"answer": answer, "sources": sources, "hits": hits}
