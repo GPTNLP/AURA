@@ -6,9 +6,18 @@ type Props = {
   onVerify: (otp: string) => Promise<void>;
   onCancel: () => void;
   error?: string | null;
+
+  // ✅ NEW (optional)
+  title?: string;
 };
 
-export default function AdminOtpModal({ email, onVerify, onCancel, error }: Props) {
+export default function AdminOtpModal({
+  email,
+  onVerify,
+  onCancel,
+  error,
+  title = "Verification",
+}: Props) {
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -31,7 +40,7 @@ export default function AdminOtpModal({ email, onVerify, onCancel, error }: Prop
     <div className="otp-overlay">
       <div className="otp-card" onClick={(e) => e.stopPropagation()}>
         <div className="otp-header">
-          <div className="otp-title">Admin verification</div>
+          <div className="otp-title">{title}</div>
           <div className="otp-subtitle">
             Code sent to <b>{email}</b>
           </div>
@@ -47,7 +56,11 @@ export default function AdminOtpModal({ email, onVerify, onCancel, error }: Prop
           autoComplete="one-time-code"
         />
 
-        {error && <div className="login-error" style={{ marginTop: 10 }}>{error}</div>}
+        {error && (
+          <div className="login-error" style={{ marginTop: 10 }}>
+            {error}
+          </div>
+        )}
 
         <div className="otp-actions">
           <button type="button" className="otp-btn otp-cancel" onClick={onCancel} disabled={loading}>

@@ -6,9 +6,16 @@ import logo from "../assets/robot.png";
 import AdminOtpModal from "../components/AdminOtpModal";
 
 export default function LoginPage() {
-  const { adminStartLogin, adminVerifyOtp } = useAuth();
+  const { adminStartLogin, adminVerifyOtp, studentStartLogin, studentVerifyOtp } = useAuth();
   const navigate = useNavigate();
 
+  // UI mode
+  const [mode, setMode] = useState<"student" | "admin">("student");
+
+  // Student fields
+  const [studentEmail, setStudentEmail] = useState("");
+
+  // Admin fields
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
 
@@ -19,37 +26,60 @@ export default function LoginPage() {
   const [showOtp, setShowOtp] = useState(false);
   const [otpEmail, setOtpEmail] = useState("");
   const [otpError, setOtpError] = useState<string | null>(null);
+  const [otpTitle, setOtpTitle] = useState("Verification");
+
+  const isTamuEmail = (email: string) => email.trim().toLowerCase().endsWith("@tamu.edu");
 
   // =========================
-  // Admin OTP Start
+  // Start Login
   // =========================
-  const startAdmin = async (e: React.FormEvent) => {
+  const start = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
     try {
+      if (mode === "student") {
+        const email = studentEmail.trim().toLowerCase();
+        if (!isTamuEmail(email)) throw new Error("Student email must end with @tamu.edu");
+
+        await studentStartLogin(email);
+
+        setOtpEmail(email);
+        setOtpTitle("Student verification");
+        setOtpError(null);
+        setShowOtp(true);
+        return;
+      }
+
+      // admin
       const email = adminEmail.trim().toLowerCase();
       await adminStartLogin(email, adminPassword);
 
       setOtpEmail(email);
+      setOtpTitle("Admin verification");
       setOtpError(null);
       setShowOtp(true);
     } catch (err: any) {
-      setError(err?.message || "Invalid admin credentials.");
+      setError(err?.message || "Login failed.");
     } finally {
       setLoading(false);
     }
   };
 
   // =========================
-  // OTP Verify (Admin)
+  // Verify OTP
   // =========================
   const verifyOtp = async (otp: string) => {
     setOtpError(null);
 
     try {
-      await adminVerifyOtp(otpEmail, otp);
+      if (mode === "student") {
+        await studentVerifyOtp(otpEmail, otp);
+      } else {
+        await adminVerifyOtp(otpEmail, otp);
+      }
+
       setShowOtp(false);
       navigate("/", { replace: true });
     } catch (err: any) {
@@ -68,38 +98,81 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <form onSubmit={startAdmin} className="login-form">
-          <label className="login-label">Admin Email</label>
-          <input
-            className="login-input"
-            value={adminEmail}
-            onChange={(e) => setAdminEmail(e.target.value)}
-            placeholder="admin@email.com"
-            autoComplete="email"
-          />
+        {/* Mode toggle */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+          <button
+            type="button"
+            className="login-btn"
+            style={{ flex: 1, opacity: mode === "student" ? 1 : 0.6 }}
+            onClick={() => {
+              setMode("student");
+              setError(null);
+            }}
+          >
+            Student
+          </button>
+          <button
+            type="button"
+            className="login-btn"
+            style={{ flex: 1, opacity: mode === "admin" ? 1 : 0.6 }}
+            onClick={() => {
+              setMode("admin");
+              setError(null);
+            }}
+          >
+            Admin
+          </button>
+        </div>
 
-          <label className="login-label">Password</label>
-          <input
-            className="login-input"
-            type="password"
-            value={adminPassword}
-            onChange={(e) => setAdminPassword(e.target.value)}
-            placeholder="Enter admin password"
-            autoComplete="current-password"
-          />
+        <form onSubmit={start} className="login-form">
+          {mode === "student" ? (
+            <>
+              <label className="login-label">Student Email</label>
+              <input
+                className="login-input"
+                value={studentEmail}
+                onChange={(e) => setStudentEmail(e.target.value)}
+                placeholder="netid@tamu.edu"
+                autoComplete="email"
+              />
+              <div className="login-footnote">Student access requires @tamu.edu</div>
+            </>
+          ) : (
+            <>
+              <label className="login-label">Admin Email</label>
+              <input
+                className="login-input"
+                value={adminEmail}
+                onChange={(e) => setAdminEmail(e.target.value)}
+                placeholder="admin@email.com"
+                autoComplete="email"
+              />
+
+              <label className="login-label">Password</label>
+              <input
+                className="login-input"
+                type="password"
+                value={adminPassword}
+                onChange={(e) => setAdminPassword(e.target.value)}
+                placeholder="Enter admin password"
+                autoComplete="current-password"
+              />
+
+              <div className="login-footnote">Admin access only</div>
+            </>
+          )}
 
           {error && <div className="login-error">{error}</div>}
 
           <button className="login-btn" type="submit" disabled={loading}>
             {loading ? "Sending code..." : "Send Code"}
           </button>
-
-          <div className="login-footnote">Admin access only</div>
         </form>
       </div>
 
       {showOtp && (
         <AdminOtpModal
+          title={otpTitle}
           email={otpEmail}
           error={otpError}
           onCancel={() => setShowOtp(false)}

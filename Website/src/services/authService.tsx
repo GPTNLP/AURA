@@ -1,9 +1,11 @@
 import { createContext, useContext, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
+type Role = "admin" | "ta" | "student";
+
 interface User {
   email: string;
-  role?: "admin";
+  role: Role;
 }
 
 interface AuthContextType {
@@ -12,6 +14,9 @@ interface AuthContextType {
 
   adminStartLogin: (email: string, password: string) => Promise<void>;
   adminVerifyOtp: (email: string, otp: string) => Promise<void>;
+
+  studentStartLogin: (email: string) => Promise<void>;
+  studentVerifyOtp: (email: string, otp: string) => Promise<void>;
 
   refreshMe: () => Promise<void>;
   logout: () => void;
@@ -60,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const res = await fetch(`${API_BASE}/auth/admin/me`, {
+    const res = await fetch(`${API_BASE}/auth/me`, {
       headers: authHeaders(token),
     });
 
@@ -74,9 +79,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearSession();
   };
 
-  // -----------------------
-  // Admin OTP
-  // -----------------------
   const adminStartLogin = async (email: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/admin/login`, {
       method: "POST",
@@ -103,18 +105,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const data = await res.json();
-
-    // Expect backend to return { token, user }
-    if (!data?.token || !data?.user) {
-      throw new Error("Server did not return a session token");
-    }
+    if (!data?.token || !data?.user) throw new Error("Server did not return a session token");
 
     setSession(data.token, data.user);
   };
 
-  const logout = () => {
-    clearSession();
+  const studentStartLogin = async (email: string) => {
+    const res = await fetch(`${API_BASE}/auth/student/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || "Student login failed");
+    }
   };
+
+  const studentVerifyOtp = async (email: string, otp: string) => {
+    const res = await fetch(`${API_BASE}/auth/student/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), otp: otp.trim() }),
+    });
+
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || "Invalid OTP");
+    }
+
+    const data = await res.json();
+    if (!data?.token || !data?.user) throw new Error("Server did not return a session token");
+
+    setSession(data.token, data.user);
+  };
+
+  const logout = () => clearSession();
 
   const value = useMemo(
     () => ({
@@ -122,6 +149,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token,
       adminStartLogin,
       adminVerifyOtp,
+      studentStartLogin,
+      studentVerifyOtp,
       refreshMe,
       logout,
     }),

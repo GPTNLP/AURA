@@ -1,4 +1,3 @@
-# Website/backend/logs_api.py
 import os
 import json
 import time
@@ -9,7 +8,7 @@ from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from security_tokens import verify_token
+from security import require_auth
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -19,24 +18,7 @@ LOG_DIR = Path(os.getenv("LOG_DIR", str(Path(__file__).resolve().parent / "stora
 LOG_FILE = LOG_DIR / "chat_logs.jsonl"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-# Secret used by the ML backend to push logs (server-to-server)
 LOG_INGEST_SECRET = os.getenv("LOG_INGEST_SECRET", "")
-
-
-def _get_bearer(request: Request) -> str:
-    auth = request.headers.get("authorization", "")
-    if not auth.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Missing Bearer token")
-    return auth.split(" ", 1)[1].strip()
-
-
-def require_auth(request: Request) -> Dict[str, Any]:
-    token = _get_bearer(request)
-    try:
-        return verify_token(token)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
 
 def require_admin(request: Request) -> Dict[str, Any]:
     payload = require_auth(request)
@@ -44,12 +26,10 @@ def require_admin(request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=403, detail="Admin only")
     return payload
 
-
 def _append_log(obj: Dict[str, Any]) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
-
 
 def _read_logs(limit: int, offset: int) -> List[Dict[str, Any]]:
     if not LOG_FILE.exists():
@@ -74,22 +54,15 @@ def _read_logs(limit: int, offset: int) -> List[Dict[str, Any]]:
             continue
     return out
 
-
 class LogWrite(BaseModel):
     event: str = "chat"
-    user_email: Optional[str] = None
-    user_role: Optional[str] = None
     prompt: Optional[str] = None
     response_preview: Optional[str] = None
     model: Optional[str] = None
     latency_ms: Optional[int] = None
     meta: Optional[Dict[str, Any]] = None
 
-
 class LogIngest(BaseModel):
-    """
-    Same idea as LogWrite but intended for server-to-server (ML backend -> this backend)
-    """
     event: str = "chat"
     user_email: Optional[str] = None
     user_role: Optional[str] = None
@@ -98,12 +71,12 @@ class LogIngest(BaseModel):
     model: Optional[str] = None
     latency_ms: Optional[int] = None
     meta: Optional[Dict[str, Any]] = None
-
 
 @router.post("/write")
 def write_log(data: LogWrite, request: Request):
     """
     Authenticated users can write a log entry.
+    Email/role are ALWAYS taken from token (prevents spoofing).
     """
     payload = require_auth(request)
     now = int(time.time())
@@ -111,8 +84,8 @@ def write_log(data: LogWrite, request: Request):
     obj = {
         "ts": now,
         "event": data.event,
-        "user_email": data.user_email or payload.get("sub"),
-        "user_role": data.user_role or payload.get("role"),
+        "user_email": payload.get("sub"),
+        "user_role": payload.get("role"),
         "prompt": data.prompt,
         "response_preview": data.response_preview,
         "model": data.model,
@@ -122,7 +95,6 @@ def write_log(data: LogWrite, request: Request):
     }
     _append_log(obj)
     return {"ok": True}
-
 
 @router.post("/ingest")
 def ingest_log(data: LogIngest, request: Request):
@@ -153,6 +125,29 @@ def ingest_log(data: LogIngest, request: Request):
     _append_log(obj)
     return {"ok": True}
 
+@router.get("/mine")
+def my_logs(request: Request, limit: int = 200, offset: int = 0):
+    """
+    Any authed user can read THEIR OWN logs only.
+    """
+    payload = require_auth(request)
+    me = (payload.get("sub") or "").strip().lower()
+
+    limit = max(1, min(limit, 1000))
+    offset = max(0, offset)
+
+    items = _read_logs(limit=5000, offset=0)
+    mine = [it for it in items if str(it.get("user_email", "")).strip().lower() == me]
+    page = mine[offset : offset + limit]
+
+    return {
+        "ok": True,
+        "email": me,
+        "total": len(mine),
+        "limit": limit,
+        "offset": offset,
+        "items": page,
+    }
 
 @router.get("/list")
 def list_logs(

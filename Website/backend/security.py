@@ -47,7 +47,8 @@ def require_camera_token(request: Request):
 # ---------------------------
 def _get_auth_token_from_request(request: Request) -> str:
     # Prefer secure httpOnly cookie
-    cookie_token = request.cookies.get("aura_token")
+    COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "aura_token")
+    cookie_token = request.cookies.get(COOKIE_NAME)
     if cookie_token:
         return cookie_token
 

@@ -3,17 +3,19 @@ import json
 import shutil
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from pydantic import BaseModel
 from pypdf import PdfReader
 
 from lightrag_local import LightRAG, QueryParam
+from security import require_auth
+from aura_db import init_db, doc_set_owner, doc_get_owner, doc_delete_owner, doc_move_owner
 
 router = APIRouter(tags=["database"])
+init_db()
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# configurable roots (relative to BACKEND_DIR unless absolute)
 DOCS_REL = os.getenv("AURA_DOCS_DIR", "storage/documents")
 DB_REL = os.getenv("AURA_DB_DIR", "storage/databases")
 
@@ -27,7 +29,54 @@ OLLAMA_URL = os.getenv("AURA_OLLAMA_URL", "http://127.0.0.1:11434")
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 os.makedirs(RAG_ROOT_DIR, exist_ok=True)
 
+# ---------------------------
+# Auth helpers
+# ---------------------------
+def _role(payload: Dict[str, Any]) -> str:
+    return str(payload.get("role") or "").lower()
 
+def _email(payload: Dict[str, Any]) -> str:
+    return str(payload.get("sub") or "").strip().lower()
+
+def require_any_user(request: Request) -> Dict[str, Any]:
+    return require_auth(request)
+
+def require_admin(request: Request) -> Dict[str, Any]:
+    p = require_auth(request)
+    if _role(p) != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return p
+
+def require_admin_or_ta(request: Request) -> Dict[str, Any]:
+    p = require_auth(request)
+    if _role(p) not in ("admin", "ta"):
+        raise HTTPException(status_code=403, detail="Admin or TA only")
+    return p
+
+def require_owner_or_admin(request: Request, rel_path: str) -> Dict[str, Any]:
+    """
+    For file operations: admin can do anything.
+    TA can only modify/delete/move files they uploaded.
+    Students can't do file ops.
+    """
+    p = require_auth(request)
+    r = _role(p)
+    if r == "admin":
+        return p
+    if r != "ta":
+        raise HTTPException(status_code=403, detail="Admin or TA only")
+
+    rel_path_norm = (rel_path or "").replace("\\", "/").lstrip("/")
+    owner = doc_get_owner(rel_path_norm)
+    if not owner:
+        raise HTTPException(status_code=403, detail="File has no owner record (admin only)")
+    if (owner.get("owner_email") or "").strip().lower() != _email(p):
+        raise HTTPException(status_code=403, detail="TA can only modify files they uploaded")
+    return p
+
+# ---------------------------
+# Path helpers
+# ---------------------------
 def _safe_join(root: str, rel: str) -> str:
     rel = (rel or "").replace("\\", "/").lstrip("/")
     full = os.path.abspath(os.path.join(root, rel))
@@ -36,20 +85,16 @@ def _safe_join(root: str, rel: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid path")
     return full
 
-
 def _db_dir(db_name: str) -> str:
     if not db_name or any(c in db_name for c in r'\/:*?"<>|'):
         raise HTTPException(status_code=400, detail="Invalid database name")
     return os.path.join(RAG_ROOT_DIR, db_name)
 
-
 def _db_config_path(db_name: str) -> str:
     return os.path.join(_db_dir(db_name), "db.json")
 
-
 def _db_workdir(db_name: str) -> str:
     return _db_dir(db_name)
-
 
 def _load_db_config(db_name: str) -> Dict[str, Any]:
     p = _db_config_path(db_name)
@@ -58,12 +103,10 @@ def _load_db_config(db_name: str) -> Dict[str, Any]:
     with open(p, "r", encoding="utf-8") as f:
         return json.load(f)
 
-
 def _save_db_config(db_name: str, cfg: Dict[str, Any]):
     os.makedirs(_db_dir(db_name), exist_ok=True)
     with open(_db_config_path(db_name), "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
-
 
 def _read_pdf(path: str) -> str:
     try:
@@ -77,11 +120,9 @@ def _read_pdf(path: str) -> str:
     except Exception:
         return ""
 
-
 def _read_text(path: str) -> str:
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         return f.read()
-
 
 def _chunk_text(text: str, max_chars: int = 2400, overlap: int = 250) -> List[str]:
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -100,7 +141,6 @@ def _chunk_text(text: str, max_chars: int = 2400, overlap: int = 250) -> List[st
         i = max(0, j - overlap)
     return chunks
 
-
 def _walk_tree(root: str) -> Dict[str, Any]:
     def build(node_path: str) -> Dict[str, Any]:
         name = os.path.basename(node_path) or "documents"
@@ -110,57 +150,57 @@ def _walk_tree(root: str) -> Dict[str, Any]:
                 children.append(build(os.path.join(node_path, item)))
             return {"name": name, "type": "dir", "children": children}
         return {"name": name, "type": "file"}
-
     return build(root)
 
-
+# ---------------------------
+# Models
+# ---------------------------
 class MkdirRequest(BaseModel):
     path: str
-
 
 class MoveRequest(BaseModel):
     src: str
     dst: str
 
-
 class CreateDBRequest(BaseModel):
     name: str
     folders: List[str] = []
-
 
 class BuildDBRequest(BaseModel):
     name: str
     folders: Optional[List[str]] = None
     force: bool = True
 
-
 class ChatRequest(BaseModel):
     db: str
     query: str
 
+# ---------------------------
+# Endpoints
+# ---------------------------
 
 @router.get("/api/documents/tree")
-def documents_tree():
-    return {
-        "root": "documents",
-        "path": DOCUMENTS_DIR,
-        "tree": _walk_tree(DOCUMENTS_DIR),
-    }
-
+def documents_tree(request: Request):
+    require_any_user(request)
+    return {"root": "documents", "path": DOCUMENTS_DIR, "tree": _walk_tree(DOCUMENTS_DIR)}
 
 @router.post("/api/documents/mkdir")
-def documents_mkdir(req: MkdirRequest):
+def documents_mkdir(req: MkdirRequest, request: Request):
+    require_admin_or_ta(request)
     full = _safe_join(DOCUMENTS_DIR, req.path)
     os.makedirs(full, exist_ok=True)
     return {"ok": True, "created": req.path}
 
-
 @router.post("/api/documents/upload")
-async def documents_upload(path: str = "", files: List[UploadFile] = File(...)):
+async def documents_upload(request: Request, path: str = "", files: List[UploadFile] = File(...)):
+    payload = require_admin_or_ta(request)
     dest_dir = _safe_join(DOCUMENTS_DIR, path)
     os.makedirs(dest_dir, exist_ok=True)
 
     saved = 0
+    owner_email = _email(payload)
+    owner_role = _role(payload)
+
     for f in files:
         name = os.path.basename(f.filename or "file")
         out = os.path.join(dest_dir, name)
@@ -168,32 +208,65 @@ async def documents_upload(path: str = "", files: List[UploadFile] = File(...)):
             w.write(await f.read())
         saved += 1
 
+        # store owner record as relative path from DOCUMENTS_DIR
+        rel_source = os.path.relpath(out, DOCUMENTS_DIR).replace("\\", "/")
+        doc_set_owner(rel_source, owner_email, owner_role)
+
     return {"ok": True, "saved": saved, "path": path}
 
-
 @router.delete("/api/documents/delete")
-def documents_delete(path: str):
+def documents_delete(request: Request, path: str):
+    """
+    Admin can delete files/dirs.
+    TA can delete ONLY files they uploaded. No directory deletes for TA.
+    """
+    rel_norm = (path or "").replace("\\", "/").lstrip("/")
     full = _safe_join(DOCUMENTS_DIR, path)
     if not os.path.exists(full):
         raise HTTPException(status_code=404, detail="Not found")
+
     if os.path.isdir(full):
+        # TA cannot delete folders
+        require_admin(request)
         shutil.rmtree(full)
-    else:
-        os.remove(full)
+        return {"ok": True, "deleted": path}
+
+    # file
+    require_owner_or_admin(request, rel_norm)
+    os.remove(full)
+    doc_delete_owner(rel_norm)
     return {"ok": True, "deleted": path}
 
-
 @router.post("/api/documents/move")
-def documents_move(req: MoveRequest):
+def documents_move(req: MoveRequest, request: Request):
+    """
+    Admin can move anything.
+    TA can move ONLY files they uploaded. No moving directories for TA.
+    """
+    src_rel = (req.src or "").replace("\\", "/").lstrip("/")
+    dst_rel = (req.dst or "").replace("\\", "/").lstrip("/")
+
     src = _safe_join(DOCUMENTS_DIR, req.src)
     dst = _safe_join(DOCUMENTS_DIR, req.dst)
+    if not os.path.exists(src):
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if os.path.isdir(src):
+        require_admin(request)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(src, dst)
+        return {"ok": True, "src": req.src, "dst": req.dst}
+
+    # file
+    require_owner_or_admin(request, src_rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.move(src, dst)
+    doc_move_owner(src_rel, dst_rel)
     return {"ok": True, "src": req.src, "dst": req.dst}
 
-
 @router.get("/api/databases")
-def list_databases():
+def list_databases(request: Request):
+    require_any_user(request)
     out = []
     for name in sorted(os.listdir(RAG_ROOT_DIR)):
         p = os.path.join(RAG_ROOT_DIR, name)
@@ -203,9 +276,11 @@ def list_databases():
             out.append(name)
     return {"databases": out}
 
-
 @router.post("/api/databases/create")
-def create_database(req: CreateDBRequest):
+def create_database(req: CreateDBRequest, request: Request):
+    # Keep DB creation admin-only (safer)
+    require_admin(request)
+
     db_dir = _db_dir(req.name)
     os.makedirs(db_dir, exist_ok=True)
 
@@ -219,14 +294,14 @@ def create_database(req: CreateDBRequest):
     _save_db_config(req.name, cfg)
     return {"ok": True, "db": req.name, "config": cfg}
 
-
 @router.get("/api/databases/{db_name}/config")
-def get_database_config(db_name: str):
+def get_database_config(db_name: str, request: Request):
+    require_any_user(request)
     return _load_db_config(db_name)
 
-
 @router.get("/api/databases/{db_name}/stats")
-def database_stats(db_name: str):
+def database_stats(db_name: str, request: Request):
+    require_any_user(request)
     cfg = _load_db_config(db_name)
     rag = LightRAG(
         working_dir=_db_workdir(db_name),
@@ -236,9 +311,10 @@ def database_stats(db_name: str):
     )
     return {"db": db_name, "config": cfg, "stats": rag.stats()}
 
-
 @router.post("/api/databases/build")
-async def build_database(req: BuildDBRequest):
+async def build_database(req: BuildDBRequest, request: Request):
+    require_admin(request)
+
     cfg = _load_db_config(req.name)
     folders = req.folders if req.folders is not None else cfg.get("folders", [])
 
@@ -284,7 +360,7 @@ async def build_database(req: BuildDBRequest):
             skipped_files += 1
             continue
 
-        rel_source = os.path.relpath(path, DOCUMENTS_DIR)
+        rel_source = os.path.relpath(path, DOCUMENTS_DIR).replace("\\", "/")
         header = f"[SOURCE FILE: {rel_source}]\n\n"
         chunks = _chunk_text(header + text)
 
@@ -311,9 +387,9 @@ async def build_database(req: BuildDBRequest):
         "stats": rag.stats(),
     }
 
-
 @router.post("/api/databases/chat")
-async def database_chat(req: ChatRequest):
+async def database_chat(req: ChatRequest, request: Request):
+    require_any_user(request)
     try:
         cfg = _load_db_config(req.db)
         rag = LightRAG(

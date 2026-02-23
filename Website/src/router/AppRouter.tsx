@@ -11,6 +11,7 @@ import SettingsPage from "../pages/SettingsPage";
 import DatabasePage from "../pages/DatabasePage";
 import ChatLogsPage from "../pages/ChatLogsPage";
 import SimulatorPage from "../pages/SimulatorPage";
+import TAManagerPage from "../pages/TAManagerPage";
 
 import Layout from "../components/Layout/Layout";
 
@@ -27,13 +28,24 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RequireRole({
+  allow,
+  children,
+}: {
+  allow: Array<"admin" | "ta" | "student">;
+  children: React.ReactNode;
+}) {
+  const { user } = useAuth();
+  if (!user) return null;
+  if (!allow.includes(user.role)) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 export default function AppRouter() {
   return (
     <Routes>
-      {/* Public */}
       <Route path="/login" element={<LoginPage />} />
 
-      {/* Protected */}
       <Route
         element={
           <RequireAuth>
@@ -41,28 +53,69 @@ export default function AppRouter() {
           </RequireAuth>
         }
       >
+        {/* Everyone */}
         <Route index element={<DashboardPage />} />
         <Route path="dashboard" element={<DashboardPage />} />
-        <Route path="control" element={<ControlPage />} />
         <Route path="camera" element={<CameraPage />} />
-
-        {/* ✅ Simulator = chat */}
         <Route path="simulator" element={<SimulatorPage />} />
 
-        {/* ✅ Database page is canonical */}
-        <Route path="database" element={<DatabasePage />} />
+        {/* Admin-only */}
+        <Route
+          path="control"
+          element={
+            <RequireRole allow={["admin"]}>
+              <ControlPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="logs"
+          element={
+            <RequireRole allow={["admin"]}>
+              <ChatLogsPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="settings"
+          element={
+            <RequireRole allow={["admin"]}>
+              <SettingsPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="admin/ta"
+          element={
+            <RequireRole allow={["admin"]}>
+              <TAManagerPage />
+            </RequireRole>
+          }
+        />
 
-        {/* ✅ Old route still works */}
-        <Route path="files" element={<Navigate to="/database" replace />} />
+        {/* Admin + TA */}
+        <Route
+          path="database"
+          element={
+            <RequireRole allow={["admin", "ta"]}>
+              <DatabasePage />
+            </RequireRole>
+          }
+        />
 
-        <Route path="logs" element={<ChatLogsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
+        {/* Old route still works (admin + TA because it's database) */}
+        <Route
+          path="files"
+          element={
+            <RequireRole allow={["admin", "ta"]}>
+              <Navigate to="/database" replace />
+            </RequireRole>
+          }
+        />
 
-        {/* Protected catch-all */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
 
-      {/* Global catch-all */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
