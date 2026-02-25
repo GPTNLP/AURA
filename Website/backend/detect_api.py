@@ -6,47 +6,27 @@ from typing import Any, Dict, List, Optional
 import cv2
 import numpy as np
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
-from ultralytics import YOLO
 
 from security import require_auth, require_ip_allowlist
 
 router = APIRouter(tags=["detect"])
-
 BACKEND_DIR = Path(__file__).resolve().parent
 
-
 def _resolve_model_path(env_value: str, default_name: str) -> Path:
-    """
-    Resolve a model path robustly:
-    - If env_value is empty -> BACKEND_DIR/default_name
-    - If env_value is absolute -> use it
-    - If env_value is relative -> resolve relative to BACKEND_DIR
-      (so "component_best.pt" or "backend/component_best.pt" both work)
-    """
     s = (env_value or "").strip()
     if not s:
         return BACKEND_DIR / default_name
-
     p = Path(s)
     if p.is_absolute():
         return p
-
-    # If someone set "backend/component_best.pt", normalize it to BACKEND_DIR/component_best.pt
-    # when the path starts with "backend/" or "Website/backend/" style nesting.
     parts = [x.lower() for x in p.parts]
     if len(parts) >= 2 and parts[0] in ("backend",) and parts[1] == default_name:
         return BACKEND_DIR / default_name
-
     return (BACKEND_DIR / p).resolve()
 
-
 # Model paths (env-overridable)
-COMPONENT_MODEL_PATH = _resolve_model_path(
-    os.getenv("AURA_COMPONENT_MODEL", ""), "component_best.pt"
-)
-COLOR_MODEL_PATH = _resolve_model_path(
-    os.getenv("AURA_COLOR_MODEL", ""), "colorcode_best.pt"
-)
+COMPONENT_MODEL_PATH = _resolve_model_path(os.getenv("AURA_COMPONENT_MODEL", ""), "component_best.pt")
+COLOR_MODEL_PATH = _resolve_model_path(os.getenv("AURA_COLOR_MODEL", ""), "colorcode_best.pt")
 
 # Inference knobs (env-overridable)
 COMP_CONF = float(os.getenv("AURA_DETECT_CONF", "0.50"))
@@ -55,23 +35,26 @@ COMP_IMGSZ = int(os.getenv("AURA_DETECT_IMGSZ", "640"))
 COLOR_CONF = float(os.getenv("AURA_COLOR_CONF", "0.50"))
 COLOR_IMGSZ = int(os.getenv("AURA_COLOR_IMGSZ", "320"))
 
-# Optional device override: "cpu", "cuda", "0" etc.
 AURA_YOLO_DEVICE = os.getenv("AURA_YOLO_DEVICE", "").strip()
-
-# Which class name to treat as "resistor" in the component model
 RESISTOR_CLASS_NAME = os.getenv("AURA_RESISTOR_CLASS", "resistor").strip().lower()
 
-_component_model: Optional[YOLO] = None
-_color_model: Optional[YOLO] = None
+_component_model = None
+_color_model = None
 
+def _import_ultralytics():
+    try:
+        from ultralytics import YOLO  # type: ignore
+        return YOLO
+    except Exception as e:
+        raise RuntimeError(
+            "ultralytics is not installed or failed to import. "
+            "Install with: pip install ultralytics"
+            f" (detail: {e})"
+        )
 
 def _load_models():
     global _component_model, _color_model
-
-    # Helpful debug prints (shows up in uvicorn logs)
-    # Comment out later if you want.
-    # print(f"[detect_api] COMPONENT_MODEL_PATH={COMPONENT_MODEL_PATH}")
-    # print(f"[detect_api] COLOR_MODEL_PATH={COLOR_MODEL_PATH}")
+    YOLO = _import_ultralytics()
 
     if _component_model is None:
         if not COMPONENT_MODEL_PATH.exists():
@@ -83,7 +66,6 @@ def _load_models():
             raise RuntimeError(f"color model not found: {COLOR_MODEL_PATH}")
         _color_model = YOLO(str(COLOR_MODEL_PATH))
 
-
 def _label_from_names(names: Any, cls_id: int) -> str:
     try:
         if isinstance(names, dict):
@@ -94,10 +76,8 @@ def _label_from_names(names: Any, cls_id: int) -> str:
         pass
     return str(cls_id)
 
-
 def _clamp(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, v))
-
 
 @router.post("/api/detect/predict")
 async def detect_predict(request: Request, file: UploadFile = File(...)):
@@ -107,7 +87,8 @@ async def detect_predict(request: Request, file: UploadFile = File(...)):
     try:
         _load_models()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Model load failed: {e}")
+        # 503 = service unavailable (missing ultralytics / model files)
+        raise HTTPException(status_code=503, detail=f"Detect not ready: {e}")
 
     data = await file.read()
     if not data:

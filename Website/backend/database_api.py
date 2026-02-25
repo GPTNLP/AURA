@@ -1,7 +1,9 @@
+# database_api.py
 import os
 import json
 import shutil
-from typing import List, Optional, Dict, Any
+import time
+from typing import List, Optional, Dict, Any, Tuple
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from pydantic import BaseModel
@@ -10,7 +12,6 @@ from pypdf import PdfReader
 from lightrag_local import LightRAG, QueryParam
 from security import require_auth, require_ip_allowlist
 from aura_db import init_db, doc_set_owner, doc_get_owner, doc_delete_owner, doc_move_owner
-from doc_owners import set_owner, get_owner, delete_owner, move_owner
 
 router = APIRouter(tags=["database"])
 init_db()
@@ -27,42 +28,16 @@ DEFAULT_LLM = os.getenv("AURA_LLM_MODEL", "llama3.2:3b")
 DEFAULT_EMBED = os.getenv("AURA_EMBED_MODEL", "nomic-embed-text")
 OLLAMA_URL = os.getenv("AURA_OLLAMA_URL", "http://127.0.0.1:11434")
 
+# Speed defaults (override via env if needed)
+DEFAULT_CHAT_MODE = os.getenv("AURA_CHAT_MODE", "vector")  # vector|bm25|hybrid
+DEFAULT_TOP_K = int(os.getenv("AURA_TOP_K", "4"))
+
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 os.makedirs(RAG_ROOT_DIR, exist_ok=True)
 
 # ---------------------------
 # Auth helpers
 # ---------------------------
-def _can_use_database(role: str) -> bool:
-    return role in ("admin", "ta")
-
-def _require_db_user(request: Request):
-    require_ip_allowlist(request)
-    payload = require_auth(request)
-    role = payload.get("role")
-    if not _can_use_database(role):
-        raise HTTPException(status_code=403, detail="Not allowed")
-    return payload
-
-def _require_admin(request: Request):
-    require_ip_allowlist(request)
-    payload = require_auth(request)
-    if payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-    return payload
-
-def _require_can_modify_file(payload: dict, rel_path: str):
-    role = payload.get("role")
-    email = (payload.get("sub") or "").strip().lower()
-
-    if role == "admin":
-        return
-
-    # TA: only their own files (never folders)
-    owner = (get_owner(rel_path) or "").strip().lower()
-    if not owner or owner != email:
-        raise HTTPException(status_code=403, detail="You can only modify files you uploaded")
-    
 def _role(payload: Dict[str, Any]) -> str:
     return str(payload.get("role") or "").lower()
 
@@ -70,15 +45,18 @@ def _email(payload: Dict[str, Any]) -> str:
     return str(payload.get("sub") or "").strip().lower()
 
 def require_any_user(request: Request) -> Dict[str, Any]:
+    require_ip_allowlist(request)
     return require_auth(request)
 
 def require_admin(request: Request) -> Dict[str, Any]:
+    require_ip_allowlist(request)
     p = require_auth(request)
     if _role(p) != "admin":
         raise HTTPException(status_code=403, detail="Admin only")
     return p
 
 def require_admin_or_ta(request: Request) -> Dict[str, Any]:
+    require_ip_allowlist(request)
     p = require_auth(request)
     if _role(p) not in ("admin", "ta"):
         raise HTTPException(status_code=403, detail="Admin or TA only")
@@ -90,6 +68,7 @@ def require_owner_or_admin(request: Request, rel_path: str) -> Dict[str, Any]:
     TA can only modify/delete/move files they uploaded.
     Students can't do file ops.
     """
+    require_ip_allowlist(request)
     p = require_auth(request)
     r = _role(p)
     if r == "admin":
@@ -184,6 +163,33 @@ def _walk_tree(root: str) -> Dict[str, Any]:
     return build(root)
 
 # ---------------------------
+# RAG cache (HUGE speed win)
+# ---------------------------
+_RAG_CACHE: Dict[str, Tuple[LightRAG, float]] = {}  # db_name -> (rag, loaded_at)
+_RAG_CACHE_TTL_S = float(os.getenv("AURA_RAG_CACHE_TTL_S", "3600"))  # 1 hour
+
+def _get_rag(db_name: str) -> LightRAG:
+    now = time.time()
+    hit = _RAG_CACHE.get(db_name)
+    if hit:
+        rag, ts = hit
+        if (now - ts) < _RAG_CACHE_TTL_S:
+            return rag
+
+    cfg = _load_db_config(db_name)
+    rag = LightRAG(
+        working_dir=_db_workdir(db_name),
+        llm_model_name=str(cfg.get("llm_model") or DEFAULT_LLM),
+        embed_model_name=str(cfg.get("embed_model") or DEFAULT_EMBED),
+        ollama_base_url=str(cfg.get("ollama_url") or OLLAMA_URL),
+    )
+    _RAG_CACHE[db_name] = (rag, now)
+    return rag
+
+def _invalidate_rag(db_name: str):
+    _RAG_CACHE.pop(db_name, None)
+
+# ---------------------------
 # Models
 # ---------------------------
 class MkdirRequest(BaseModel):
@@ -205,11 +211,12 @@ class BuildDBRequest(BaseModel):
 class ChatRequest(BaseModel):
     db: str
     query: str
+    mode: Optional[str] = None   # vector|bm25|hybrid
+    top_k: Optional[int] = None  # overrides default
 
 # ---------------------------
 # Endpoints
 # ---------------------------
-
 @router.get("/api/documents/tree")
 def documents_tree(request: Request):
     require_any_user(request)
@@ -239,7 +246,6 @@ async def documents_upload(request: Request, path: str = "", files: List[UploadF
             w.write(await f.read())
         saved += 1
 
-        # store owner record as relative path from DOCUMENTS_DIR
         rel_source = os.path.relpath(out, DOCUMENTS_DIR).replace("\\", "/")
         doc_set_owner(rel_source, owner_email, owner_role)
 
@@ -247,22 +253,16 @@ async def documents_upload(request: Request, path: str = "", files: List[UploadF
 
 @router.delete("/api/documents/delete")
 def documents_delete(request: Request, path: str):
-    """
-    Admin can delete files/dirs.
-    TA can delete ONLY files they uploaded. No directory deletes for TA.
-    """
     rel_norm = (path or "").replace("\\", "/").lstrip("/")
     full = _safe_join(DOCUMENTS_DIR, path)
     if not os.path.exists(full):
         raise HTTPException(status_code=404, detail="Not found")
 
     if os.path.isdir(full):
-        # TA cannot delete folders
         require_admin(request)
         shutil.rmtree(full)
         return {"ok": True, "deleted": path}
 
-    # file
     require_owner_or_admin(request, rel_norm)
     os.remove(full)
     doc_delete_owner(rel_norm)
@@ -270,10 +270,6 @@ def documents_delete(request: Request, path: str):
 
 @router.post("/api/documents/move")
 def documents_move(req: MoveRequest, request: Request):
-    """
-    Admin can move anything.
-    TA can move ONLY files they uploaded. No moving directories for TA.
-    """
     src_rel = (req.src or "").replace("\\", "/").lstrip("/")
     dst_rel = (req.dst or "").replace("\\", "/").lstrip("/")
 
@@ -288,7 +284,6 @@ def documents_move(req: MoveRequest, request: Request):
         shutil.move(src, dst)
         return {"ok": True, "src": req.src, "dst": req.dst}
 
-    # file
     require_owner_or_admin(request, src_rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     shutil.move(src, dst)
@@ -309,7 +304,6 @@ def list_databases(request: Request):
 
 @router.post("/api/databases/create")
 def create_database(req: CreateDBRequest, request: Request):
-    # Keep DB creation admin-only (safer)
     require_admin(request)
 
     db_dir = _db_dir(req.name)
@@ -323,6 +317,7 @@ def create_database(req: CreateDBRequest, request: Request):
         "ollama_url": OLLAMA_URL,
     }
     _save_db_config(req.name, cfg)
+    _invalidate_rag(req.name)
     return {"ok": True, "db": req.name, "config": cfg}
 
 @router.get("/api/databases/{db_name}/config")
@@ -334,102 +329,8 @@ def get_database_config(db_name: str, request: Request):
 def database_stats(db_name: str, request: Request):
     require_any_user(request)
     cfg = _load_db_config(db_name)
-    rag = LightRAG(
-        working_dir=_db_workdir(db_name),
-        llm_model_name=str(cfg.get("llm_model") or DEFAULT_LLM),
-        embed_model_name=str(cfg.get("embed_model") or DEFAULT_EMBED),
-        ollama_base_url=str(cfg.get("ollama_url") or OLLAMA_URL),
-    )
+    rag = _get_rag(db_name)
     return {"db": db_name, "config": cfg, "stats": rag.stats()}
-
-@router.get("/api/documents/tree")
-def documents_tree(request: Request):
-    _require_db_user(request)
-    return {
-        "root": "documents",
-        "path": DOCUMENTS_DIR,
-        "tree": _walk_tree(DOCUMENTS_DIR),
-    }
-
-@router.post("/api/documents/mkdir")
-def documents_mkdir(req: MkdirRequest, request: Request):
-    _require_db_user(request)
-    full = _safe_join(DOCUMENTS_DIR, req.path)
-    os.makedirs(full, exist_ok=True)
-    return {"ok": True, "created": req.path}
-
-@router.post("/api/documents/upload")
-async def documents_upload(request: Request, path: str = "", files: List[UploadFile] = File(...)):
-    payload = _require_db_user(request)
-
-    dest_dir = _safe_join(DOCUMENTS_DIR, path)
-    os.makedirs(dest_dir, exist_ok=True)
-
-    saved = 0
-    uploader = (payload.get("sub") or "").strip().lower()
-
-    for f in files:
-        name = os.path.basename(f.filename or "file")
-        out = os.path.join(dest_dir, name)
-        with open(out, "wb") as w:
-            w.write(await f.read())
-        saved += 1
-
-        # ✅ ownership tracked by RELATIVE path (from DOCUMENTS_DIR)
-        rel = os.path.relpath(out, DOCUMENTS_DIR).replace("\\", "/")
-        set_owner(rel, uploader)
-
-    return {"ok": True, "saved": saved, "path": path}
-
-@router.delete("/api/documents/delete")
-def documents_delete(request: Request, path: str):
-    payload = _require_db_user(request)
-    full = _safe_join(DOCUMENTS_DIR, path)
-
-    if not os.path.exists(full):
-        raise HTTPException(status_code=404, detail="Not found")
-
-    # TA cannot delete folders
-    if os.path.isdir(full) and payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="TAs cannot delete folders")
-
-    # If file + TA => must own it
-    if os.path.isfile(full) and payload.get("role") != "admin":
-        _require_can_modify_file(payload, path)
-
-    if os.path.isdir(full):
-        shutil.rmtree(full)
-    else:
-        os.remove(full)
-        delete_owner(path)
-
-    return {"ok": True, "deleted": path}
-
-@router.post("/api/documents/move")
-def documents_move(req: MoveRequest, request: Request):
-    payload = _require_db_user(request)
-
-    src = _safe_join(DOCUMENTS_DIR, req.src)
-    dst = _safe_join(DOCUMENTS_DIR, req.dst)
-
-    if not os.path.exists(src):
-        raise HTTPException(status_code=404, detail="Not found")
-
-    # TA cannot move folders
-    if os.path.isdir(src) and payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="TAs cannot move folders")
-
-    # TA file move => must own
-    if os.path.isfile(src) and payload.get("role") != "admin":
-        _require_can_modify_file(payload, req.src)
-
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.move(src, dst)
-
-    if os.path.isfile(dst):
-        move_owner(req.src, req.dst)
-
-    return {"ok": True, "src": req.src, "dst": req.dst}
 
 @router.post("/api/databases/build")
 async def build_database(req: BuildDBRequest, request: Request):
@@ -444,12 +345,7 @@ async def build_database(req: BuildDBRequest, request: Request):
     workdir = _db_workdir(req.name)
     os.makedirs(workdir, exist_ok=True)
 
-    rag = LightRAG(
-        working_dir=workdir,
-        llm_model_name=str(cfg.get("llm_model") or DEFAULT_LLM),
-        embed_model_name=str(cfg.get("embed_model") or DEFAULT_EMBED),
-        ollama_base_url=str(cfg.get("ollama_url") or OLLAMA_URL),
-    )
+    rag = _get_rag(req.name)
 
     if req.force:
         rag.reset()
@@ -496,6 +392,8 @@ async def build_database(req: BuildDBRequest, request: Request):
     except Exception:
         pass
 
+    _invalidate_rag(req.name)  # next chat loads fresh store from disk
+
     return {
         "ok": True,
         "status": "Database built",
@@ -511,14 +409,15 @@ async def build_database(req: BuildDBRequest, request: Request):
 async def database_chat(req: ChatRequest, request: Request):
     require_any_user(request)
     try:
-        cfg = _load_db_config(req.db)
-        rag = LightRAG(
-            working_dir=_db_workdir(req.db),
-            llm_model_name=str(cfg.get("llm_model") or DEFAULT_LLM),
-            embed_model_name=str(cfg.get("embed_model") or DEFAULT_EMBED),
-            ollama_base_url=str(cfg.get("ollama_url") or OLLAMA_URL),
-        )
-        return await rag.aquery(req.query, param=QueryParam(mode="hybrid", top_k=5))
+        rag = _get_rag(req.db)
+        mode = (req.mode or DEFAULT_CHAT_MODE).lower().strip()
+        top_k = int(req.top_k or DEFAULT_TOP_K)
+        top_k = max(1, min(top_k, 8))  # clamp
+
+        # FAST DEFAULTS:
+        # vector mode + low top_k is dramatically faster than hybrid
+        param = QueryParam(mode=mode, top_k=top_k)
+        return await rag.aquery(req.query, param=param)
     except HTTPException:
         raise
     except Exception as e:

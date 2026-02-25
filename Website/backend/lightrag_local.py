@@ -1,3 +1,4 @@
+# backend/lightrag_local.py
 from __future__ import annotations
 
 import os
@@ -13,13 +14,29 @@ import urllib.request
 import faiss
 from rank_bm25 import BM25Okapi
 
+# ---------------------------
+# Tunables (env override)
+# ---------------------------
+AURA_OLLAMA_TIMEOUT_S = float(os.getenv("AURA_OLLAMA_TIMEOUT_S", "180"))  # backend->ollama
+AURA_NUM_PREDICT = int(os.getenv("AURA_NUM_PREDICT", "160"))             # fewer tokens = faster
+AURA_NUM_CTX = int(os.getenv("AURA_NUM_CTX", "2048"))                    # smaller ctx = faster
+AURA_TEMPERATURE = float(os.getenv("AURA_TEMPERATURE", "0.2"))
+AURA_NUM_THREAD = int(os.getenv("AURA_NUM_THREAD", "0"))                 # 0 = let ollama decide
+AURA_KEEP_ALIVE = os.getenv("AURA_KEEP_ALIVE", "10m")                    # keep model warm
 
-AURA_OLLAMA_TIMEOUT_S = float(os.getenv("AURA_OLLAMA_TIMEOUT_S", "600"))
+# RAG context size (this matters a LOT for speed)
+MAX_CTX_CHARS = int(os.getenv("AURA_MAX_CTX_CHARS", "6000"))
+# Retrieval
+DEFAULT_TOP_K = int(os.getenv("AURA_TOP_K", "4"))
+
+# BM25 rebuild cadence (speeds up indexing/build)
+BM25_REBUILD_EVERY = int(os.getenv("AURA_BM25_REBUILD_EVERY", "50"))
+
 
 @dataclass
 class QueryParam:
     mode: str = "hybrid"   # "vector" | "bm25" | "hybrid"
-    top_k: int = 8
+    top_k: int = DEFAULT_TOP_K
 
 
 def _now_ms() -> int:
@@ -99,18 +116,24 @@ class OllamaClient:
             raise RuntimeError("Ollama embeddings returned no embedding vector.")
         return np.array(emb, dtype=np.float32)
 
-    async def generate(self, prompt: str, system: str = "", timeout_s: float = 600.0) -> str:
-        payload = {
+    async def generate(self, prompt: str, system: str = "", timeout_s: float = 180.0) -> str:
+        options: Dict[str, Any] = {
+            "temperature": AURA_TEMPERATURE,
+            "num_predict": AURA_NUM_PREDICT,
+            "num_ctx": AURA_NUM_CTX,
+        }
+        if AURA_NUM_THREAD > 0:
+            options["num_thread"] = AURA_NUM_THREAD
+
+        payload: Dict[str, Any] = {
             "model": self.llm_model,
             "prompt": prompt,
             "system": system,
             "stream": False,
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 300,
-                "num_ctx": 4096,
-            },
+            "keep_alive": AURA_KEEP_ALIVE,
+            "options": options,
         }
+
         try:
             out = await asyncio.to_thread(self._post_json, "/api/generate", payload, timeout_s)
         except Exception as e:
@@ -153,8 +176,10 @@ class LightRAG:
         self._rows: List[Dict[str, Any]] = _load_json(self.meta_path, default=[])
         self._emb: Optional[np.ndarray] = None
         self._index: Optional[faiss.Index] = None
+
         self._bm25: Optional[BM25Okapi] = None
         self._bm25_tokens: List[List[str]] = []
+        self._inserts_since_bm25 = 0
 
         self._load_store()
 
@@ -175,8 +200,13 @@ class LightRAG:
 
         self._bm25_tokens = [_tokenize(r.get("text", "")) for r in self._rows]
         self._bm25 = BM25Okapi(self._bm25_tokens) if self._bm25_tokens else None
+        self._inserts_since_bm25 = 0
 
     def flush(self):
+        # Ensure BM25 is rebuilt before saving (so queries after restart are consistent)
+        if self._bm25_tokens:
+            self._bm25 = BM25Okapi(self._bm25_tokens)
+
         _save_json(self.meta_path, self._rows)
         if self._emb is not None:
             np.save(self.emb_path, self._emb.astype(np.float32))
@@ -189,6 +219,7 @@ class LightRAG:
         self._index = None
         self._bm25 = None
         self._bm25_tokens = []
+        self._inserts_since_bm25 = 0
         for p in [self.meta_path, self.emb_path, self.index_path]:
             try:
                 if os.path.exists(p):
@@ -197,7 +228,6 @@ class LightRAG:
                 pass
 
     def stats(self) -> Dict[str, Any]:
-        # keep key name "vdb_path" so your frontend doesn't need changes
         return {
             "chunk_count": len(self._rows),
             "vdb_path": self.working_dir,
@@ -221,8 +251,14 @@ class LightRAG:
             assert self._index is not None
             self._index.add(emb.reshape(1, -1))
 
-        self._bm25_tokens = [_tokenize(r.get("text", "")) for r in self._rows]
-        self._bm25 = BM25Okapi(self._bm25_tokens) if self._bm25_tokens else None
+        # Incremental BM25 tokens (fast)
+        self._bm25_tokens.append(_tokenize(text))
+        self._inserts_since_bm25 += 1
+
+        # Rebuild BM25 occasionally (not every insert)
+        if self._inserts_since_bm25 >= BM25_REBUILD_EVERY:
+            self._bm25 = BM25Okapi(self._bm25_tokens) if self._bm25_tokens else None
+            self._inserts_since_bm25 = 0
 
     def _search_vector(self, q_emb: np.ndarray, top_k: int) -> List[Tuple[int, float]]:
         if self._index is None or self._emb is None or len(self._rows) == 0:
@@ -237,8 +273,13 @@ class LightRAG:
         return out
 
     def _search_bm25(self, query: str, top_k: int) -> List[Tuple[int, float]]:
-        if self._bm25 is None or len(self._rows) == 0:
+        if len(self._rows) == 0:
             return []
+        if self._bm25 is None:
+            self._bm25 = BM25Okapi(self._bm25_tokens) if self._bm25_tokens else None
+        if self._bm25 is None:
+            return []
+
         toks = _tokenize(query)
         scores = self._bm25.get_scores(toks)
         idxs = np.argsort(-scores)[: max(1, int(top_k))]
@@ -290,7 +331,6 @@ class LightRAG:
                 sources.append(src)
 
         context = "\n\n---\n\n".join(ctx_parts)
-        MAX_CTX_CHARS = 12000
         if len(context) > MAX_CTX_CHARS:
             context = context[:MAX_CTX_CHARS] + "\n\n[...context truncated...]"
 
