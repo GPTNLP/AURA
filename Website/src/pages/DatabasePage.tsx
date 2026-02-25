@@ -1063,7 +1063,8 @@ export default function DatabasePage() {
               <button className="btn btn-primary" disabled={busy !== "" || !activeDb} onClick={doBuildDb} style={{ width: "100%" }}>
                 {busy === "db-build" ? "Building…" : `Build "${activeDb || "DB"}"`}
               </button>
-              <div className="db-mini">Builds from included folders (force rebuild).</div>
+              <div className="db-mini">Builds from included folders (force </div>
+              <div className="db-mini">rebuild).</div>
             </div>
 
             {dbStats && (
