@@ -1,5 +1,4 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
 
 name: Build and deploy Python app to Azure Web App - Aura-Backend
 
@@ -24,20 +23,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Create virtual environment and install dependencies
+      - name: Install dependencies (Azure-safe)
+        working-directory: Website/backend
         run: |
-          cd Website/backend
-          python -m venv antenv
-          source antenv/bin/activate
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Upload backend artifact for deployment
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: |
-            Website/backend
-            !Website/backend/antenv/
+          path: Website/backend
 
   deploy:
     runs-on: ubuntu-latest
@@ -51,6 +47,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
+          path: Website/backend
 
       - name: Login to Azure
         uses: azure/login@v2
@@ -65,4 +62,4 @@ jobs:
         with:
           app-name: 'Aura-Backend'
           slot-name: 'Production'
-          package: .
+          package: Website/backend

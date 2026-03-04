@@ -1,22 +1,25 @@
 # backend/main.py
 import os
+import importlib
 from pathlib import Path
-
-# ---- Fix OpenMP runtime conflicts on Windows (faiss/torch/etc) ----
-# This prevents the libomp vs libiomp crash warning from killing performance or failing imports.
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-os.environ.setdefault("OMP_NUM_THREADS", os.getenv("OMP_NUM_THREADS", "1"))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
-# Load .env for LOCAL DEV only (Azure/ACA will use real env vars)
-env_path = Path(__file__).resolve().parents[1] / ".env"
-if env_path.exists():
-    load_dotenv(env_path)
+# Load .env ONLY for local dev; Azure uses App Settings (env vars).
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
 
 ENV = os.getenv("ENV", "").lower()
+
+# ---- Optional local .env loading ----
+if ENV in ("", "dev", "local") and load_dotenv is not None:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+
 docs_url = None if ENV in ("prod", "production") else "/docs"
 redoc_url = None if ENV in ("prod", "production") else "/redoc"
 
@@ -28,66 +31,95 @@ app = FastAPI(
 )
 
 # ---- CORS ----
-ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
-if ALLOWED_ORIGINS:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+allowed = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if not allowed:
+    allowed = ["http://127.0.0.1:5173", "http://localhost:5173"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "env": ENV}
 
 def include_router_safely(module_name: str, label: str):
+    """
+    Imports a module and includes its `router` if present.
+    Never blocks app startup if a router fails to import.
+    """
     try:
-        mod = __import__(module_name, fromlist=["router"])
+        mod = importlib.import_module(module_name)
         router = getattr(mod, "router", None)
         if router is None:
             raise RuntimeError(f"{module_name} has no attribute 'router'")
         app.include_router(router)
-        print(f"✅ Loaded router: {label}")
+        print(f"✅ Loaded router: {label} ({module_name})")
     except Exception as e:
-        print(f"⚠️ Router not loaded ({label}): {e}")
+        print(f"⚠️ Router not loaded ({label} / {module_name}): {e}")
 
-# ---- Routers ----
-include_router_safely("database_api", "database_api")
-include_router_safely("camera_api", "camera_api")
-include_router_safely("detect_api", "detect_api")
-include_router_safely("admin_auth_api", "admin_auth_api")
-include_router_safely("logs_api", "logs_api")
-include_router_safely("auth_me_api", "auth_me_api")
-include_router_safely("student_auth_api", "student_auth_api")
-include_router_safely("ta_auth_api", "ta_auth_api")
-include_router_safely("ta_admin_api", "ta_admin_api")
-include_router_safely("tts_api", "tts_api")
-include_router_safely("stt_api", "stt_api")
+# ---- Always-safe routers (no ML deps) ----
+# Adjust these names to your actual file/module names.
+# If your routers live under backend/, the imports below should be "backend.<name>"
+# If they live at the same level as main.py, they should be "<name>"
 
-# ---- Warmup Ollama on startup (reduces first-request delay) ----
+BASE = os.getenv("AURA_ROUTER_PREFIX", "").strip()  # optional
+
+def m(name: str) -> str:
+    # If you use backend/ as a package, set AURA_USE_BACKEND_PACKAGE=1 in Azure.
+    if os.getenv("AURA_USE_BACKEND_PACKAGE", "0") == "1":
+        return f"backend.{name}"
+    return name
+
+include_router_safely(m("auth_me_api"), "auth_me_api")
+include_router_safely(m("admin_auth_api"), "admin_auth_api")
+include_router_safely(m("student_auth_api"), "student_auth_api")
+include_router_safely(m("ta_auth_api"), "ta_auth_api")
+include_router_safely(m("ta_admin_api"), "ta_admin_api")
+include_router_safely(m("database_api"), "database_api")
+include_router_safely(m("logs_api"), "logs_api")
+
+# ---- Optional / Heavy routers behind feature flags ----
+# These often import OpenCV/torch/whisper/etc — keep OFF on Azure.
+if os.getenv("ENABLE_CAMERA", "0") == "1":
+    include_router_safely(m("camera_api"), "camera_api")
+
+if os.getenv("ENABLE_DETECT", "0") == "1":
+    include_router_safely(m("detect_api"), "detect_api")
+
+if os.getenv("ENABLE_TTS", "0") == "1":
+    include_router_safely(m("tts_api"), "tts_api")
+
+if os.getenv("ENABLE_STT", "0") == "1":
+    include_router_safely(m("stt_api"), "stt_api")
+
+# ---- Ollama warmup OFF by default ----
 @app.on_event("startup")
-async def _warm_ollama():
-    try:
-        from lightrag_local import OllamaClient  # uses your existing client
+async def _startup():
+    # Never run warmup unless explicitly enabled.
+    if os.getenv("ENABLE_OLLAMA_WARMUP", "0") != "1":
+        print("ℹ️ Ollama warmup disabled")
+        return
 
-        ollama_url = os.getenv("AURA_OLLAMA_URL", "http://127.0.0.1:11434")
+    try:
+        from lightrag_local import OllamaClient
+
+        ollama_url = os.getenv("AURA_OLLAMA_URL", "")
+        if not ollama_url:
+            print("⚠️ Ollama warmup enabled but AURA_OLLAMA_URL is empty; skipping")
+            return
+
         llm = os.getenv("AURA_LLM_MODEL", "llama3.2:3b")
         emb = os.getenv("AURA_EMBED_MODEL", "nomic-embed-text")
+        timeout_s = float(os.getenv("AURA_OLLAMA_TIMEOUT_S", "10"))
 
         client = OllamaClient(base_url=ollama_url, embed_model=emb, llm_model=llm)
-        # Load embed model + llm model into memory
         await client.embed("warmup")
-        await client.generate(prompt="Say 'ready'.", system="", timeout_s=float(os.getenv("AURA_OLLAMA_TIMEOUT_S", "180")))
+        await client.generate(prompt="Say 'ready'.", system="", timeout_s=timeout_s)
         print("✅ Ollama warmup complete")
     except Exception as e:
         print(f"⚠️ Ollama warmup skipped: {e}")
