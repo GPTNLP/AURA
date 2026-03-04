@@ -35,8 +35,11 @@ const LS_USER = "aura-user";
 
 const API_BASE =
   (import.meta.env.VITE_AUTH_API_BASE as string | undefined) ||
-  (import.meta.env.VITE_CAMERA_API_BASE as string | undefined) ||
-  "http://127.0.0.1:9000";
+  (import.meta.env.VITE_CAMERA_API_BASE as string | undefined);
+
+if (!API_BASE) {
+  throw new Error("Missing VITE_AUTH_API_BASE in production build.");
+}
 
 function authHeaders(token: string | null): HeadersInit {
   if (!token) return {};
