@@ -19,6 +19,7 @@ import DatabasePage from "../pages/DatabasePage";
 import ChatLogsPage from "../pages/ChatLogsPage";
 import SimulatorPage from "../pages/SimulatorPage";
 import TAManagePage from "../pages/TAManagePage";
+import AdminsPage from "../pages/AdminsPage"; // ✅ NEW
 
 type Role = "admin" | "ta" | "student";
 
@@ -109,6 +110,16 @@ export default function AppRouter() {
           element={
             <RequireRole allow={["admin"]}>
               <TAManagePage />
+            </RequireRole>
+          }
+        />
+
+        {/* ✅ NEW: Admin Management (admins only) */}
+        <Route
+          path="admin/admins"
+          element={
+            <RequireRole allow={["admin"]}>
+              <AdminsPage />
             </RequireRole>
           }
         />

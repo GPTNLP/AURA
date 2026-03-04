@@ -19,14 +19,10 @@ export default function Sidebar() {
   useEffect(() => {
     localStorage.setItem(LS_SIDEBAR_COLLAPSED, collapsed ? "1" : "0");
 
-    document.documentElement.style.setProperty(
-      "--sidebar-width",
-      collapsed ? "72px" : "240px"
-    );
+    document.documentElement.style.setProperty("--sidebar-width", collapsed ? "72px" : "240px");
   }, [collapsed]);
 
-  const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `sidebar-link ${isActive ? "active" : ""}`;
+  const linkClass = ({ isActive }: { isActive: boolean }) => `sidebar-link ${isActive ? "active" : ""}`;
 
   const adminLinkClass = ({ isActive }: { isActive: boolean }) =>
     `sidebar-link admin-link ${isActive ? "active" : ""}`;
@@ -102,6 +98,11 @@ export default function Sidebar() {
 
             <NavLink to="/admin/ta" className={adminLinkClass}>
               <span className="sidebar-link-text">TA Manager</span>
+            </NavLink>
+
+            {/* ✅ NEW: Admins manager */}
+            <NavLink to="/admin/admins" className={adminLinkClass}>
+              <span className="sidebar-link-text">Admins</span>
             </NavLink>
           </div>
         )}

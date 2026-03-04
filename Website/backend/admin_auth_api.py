@@ -6,17 +6,20 @@ import random
 import smtplib
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from fastapi import APIRouter, Request, HTTPException, Response
 from pydantic import BaseModel
 
-from security import require_ip_allowlist
+from security import require_ip_allowlist, require_auth
 from security_tokens import mint_app_token
-from hash_passwords import verify_password as verify_pbkdf2_password
+from hash_passwords import (
+    verify_password as verify_pbkdf2_password,
+    hash_password as hash_pbkdf2_password,
+)
 from otp_store import OTPStore, hash_code
 
-from config import ADMIN_USERS_PATH, ensure_storage_layout  # ✅ persistent path + auto-create
+from config import ADMIN_USERS_PATH, ensure_storage_layout  # persistent path + auto-create
 
 # Load .env ONLY for local dev; Azure uses App Settings (env vars).
 try:
@@ -38,7 +41,7 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 
 # Admin settings
-ADMIN_OTP_TTL_SECONDS = int(os.getenv("ADMIN_OTP_TTL_SECONDS", "300"))  # 5 min
+ADMIN_OTP_TTL_SECONDS = int(os.getenv("ADMIN_OTP_TTL_SECONDS", "300"))
 ADMIN_MAX_OTP_ATTEMPTS = int(os.getenv("ADMIN_MAX_OTP_ATTEMPTS", "5"))
 
 # Simple IP rate limit (per window)
@@ -60,6 +63,14 @@ class AdminLoginRequest(BaseModel):
 class AdminVerifyRequest(BaseModel):
     email: str
     otp: str
+
+# Admin management (admin-only)
+class AdminCreateRequest(BaseModel):
+    email: str
+    password: str
+
+class AdminPublic(BaseModel):
+    email: str
 
 # --- Simple in-memory rate store ---
 _RATE: Dict[str, Dict[str, Any]] = {}
@@ -99,13 +110,13 @@ def _send_otp_email(to_email: str, code: str):
         server.login(SMTP_USER, SMTP_PASS)
         server.send_message(msg)
 
-def _load_admins() -> Dict[str, str]:
-    """
-    Loads admins from persistent storage:
-      ADMIN_USERS_PATH (usually /home/site/storage/admin_users.json on Azure)
-    Expected format:
-      {"admins": [{"email": "...", "password_hash": "..."}]}
-    """
+def _should_secure_cookie(request: Request) -> bool:
+    envv = (os.getenv("ENV", "") or "").lower()
+    if envv in ("prod", "production"):
+        return True
+    return request.url.scheme == "https"
+
+def _read_admin_store() -> Dict[str, Any]:
     ensure_storage_layout()
 
     # Auto-create if missing
@@ -113,39 +124,60 @@ def _load_admins() -> Dict[str, str]:
         ADMIN_USERS_PATH.write_text('{"admins":[]}\n', encoding="utf-8")
 
     try:
-        with open(ADMIN_USERS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = json.loads(ADMIN_USERS_PATH.read_text(encoding="utf-8") or "{}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Admin store unreadable: {e}")
+
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=500, detail="Admin store invalid (must be JSON object)")
 
     admins_list = data.get("admins", [])
     if not isinstance(admins_list, list):
         raise HTTPException(status_code=500, detail="Admin store invalid format (admins must be a list)")
 
-    out: Dict[str, str] = {}
+    # normalize list items
+    cleaned: List[Dict[str, str]] = []
     for a in admins_list:
         if not isinstance(a, dict):
             continue
         email = (a.get("email") or "").strip().lower()
         ph = (a.get("password_hash") or "").strip()
         if email and ph:
+            cleaned.append({"email": email, "password_hash": ph})
+
+    data["admins"] = cleaned
+    return data
+
+def _write_admin_store(data: Dict[str, Any]) -> None:
+    ensure_storage_layout()
+    tmp = ADMIN_USERS_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(ADMIN_USERS_PATH)
+
+def _load_admins_map() -> Dict[str, str]:
+    data = _read_admin_store()
+    out: Dict[str, str] = {}
+    for a in data.get("admins", []):
+        email = (a.get("email") or "").strip().lower()
+        ph = (a.get("password_hash") or "").strip()
+        if email and ph:
             out[email] = ph
     return out
 
-def _should_secure_cookie(request: Request) -> bool:
-    """
-    Secure cookies only work on HTTPS.
-    - Local dev (http://127.0.0.1) -> False
-    - Azure/real domain (https)     -> True
-    """
-    env = (os.getenv("ENV", "") or "").lower()
-    if env in ("prod", "production"):
-        return True
-    return request.url.scheme == "https"
+def _require_admin(request: Request) -> Dict[str, Any]:
+    require_ip_allowlist(request)
+    payload = require_auth(request)
+    role = (payload.get("role") or "").lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    return payload
+
+# -----------------------
+# Auth flow (existing)
+# -----------------------
 
 @router.post("/login")
 async def login(data: AdminLoginRequest, request: Request):
-    # Keep if you want; set ALLOWED_IPS empty in config to allow all
     require_ip_allowlist(request)
 
     ip = _client_ip(request)
@@ -159,7 +191,7 @@ async def login(data: AdminLoginRequest, request: Request):
     if not email or "@" not in email or not password:
         raise invalid
 
-    admins = _load_admins()
+    admins = _load_admins_map()
     stored_hash = admins.get(email)
     if not stored_hash:
         raise invalid
@@ -219,13 +251,11 @@ async def verify(data: AdminVerifyRequest, request: Request, response: Response)
         **cookie_kwargs,
     )
 
-    # ✅ IMPORTANT: also return token so your frontend session works immediately
     return {"token": token, "user": result["user"], "expires_in": result["expires_in"]}
 
 @router.get("/me")
 def me(request: Request):
     require_ip_allowlist(request)
-    from security import require_auth
     payload = require_auth(request)
     return {
         "user": {"email": payload.get("sub"), "role": payload.get("role")},
@@ -236,3 +266,80 @@ def me(request: Request):
 def logout(response: Response):
     response.delete_cookie(COOKIE_NAME)
     return {"ok": True}
+
+# -----------------------
+# Admin management (NEW)
+# -----------------------
+
+@router.get("/admins")
+def list_admins(request: Request):
+    _require_admin(request)
+    data = _read_admin_store()
+    admins = sorted({(a.get("email") or "").strip().lower() for a in data.get("admins", []) if isinstance(a, dict)})
+    admins = [e for e in admins if e]
+    return {"admins": [{"email": e} for e in admins]}
+
+@router.post("/admins")
+def add_admin(req: AdminCreateRequest, request: Request):
+    payload = _require_admin(request)
+    actor = (payload.get("sub") or "").strip().lower()
+
+    email = (req.email or "").strip().lower()
+    password = (req.password or "").strip()
+
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    data = _read_admin_store()
+    admins_list: List[Dict[str, str]] = data.get("admins", [])
+
+    exists = any(isinstance(a, dict) and (a.get("email") or "").strip().lower() == email for a in admins_list)
+    if exists:
+        raise HTTPException(status_code=409, detail="Admin already exists")
+
+    admins_list.append({
+        "email": email,
+        "password_hash": hash_pbkdf2_password(password),
+        "created_by": actor,
+        "created_at": int(time.time()),
+    })
+    data["admins"] = admins_list
+    _write_admin_store(data)
+
+    return {"ok": True, "added": {"email": email}}
+
+@router.delete("/admins/{email}")
+def remove_admin(email: str, request: Request):
+    payload = _require_admin(request)
+    actor = (payload.get("sub") or "").strip().lower()
+
+    target = (email or "").strip().lower()
+    if not target or "@" not in target:
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    if target == actor:
+        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+
+    data = _read_admin_store()
+    admins_list: List[Dict[str, str]] = data.get("admins", [])
+
+    new_list: List[Dict[str, str]] = []
+    removed = False
+    for a in admins_list:
+        if not isinstance(a, dict):
+            continue
+        e = (a.get("email") or "").strip().lower()
+        if e == target:
+            removed = True
+            continue
+        new_list.append(a)
+
+    if not removed:
+        raise HTTPException(status_code=404, detail="Admin not found")
+
+    data["admins"] = new_list
+    _write_admin_store(data)
+
+    return {"ok": True, "removed": {"email": target}}
