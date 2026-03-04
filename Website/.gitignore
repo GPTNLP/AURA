@@ -40,17 +40,8 @@ backend/admin_users.json
 # ========================
 *.log
 
-
-
 # runtime data (never commit)
 Website/backend/storage/
-*.sqlite
-*.jsonl
-admin_users.json
-ta_users.json
-chat_logs.jsonl
-
-Website/backend/storage_backup/
 *.sqlite
 *.jsonl
 admin_users.json
