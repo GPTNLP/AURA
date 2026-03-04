@@ -42,8 +42,17 @@ backend/admin_users.json
 
 
 
-# runtime/persistent data (DO NOT COMMIT)
+# runtime data (never commit)
 Website/backend/storage/
-Website/backend/*.sqlite
-Website/backend/**/*.sqlite
-Website/backend/**/*.jsonl
+*.sqlite
+*.jsonl
+admin_users.json
+ta_users.json
+chat_logs.jsonl
+
+Website/backend/storage_backup/
+*.sqlite
+*.jsonl
+admin_users.json
+ta_users.json
+chat_logs.jsonl
