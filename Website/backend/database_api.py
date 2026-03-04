@@ -540,8 +540,8 @@ async def build_database(req: BuildDBRequest, request: Request):
             }
         except Exception as e:
             # Fall through to simple engine if Ollama is unreachable etc.
-            # This prevents the whole build from dying on Azure.
-            pass
+            # But keep a useful message in logs.
+            print(f"[database_api] LightRAG build failed, falling back to simple. Error: {e}")
 
     # Azure-safe SIMPLE build (no Ollama, no extra deps)
     inserted_chunks = 0
@@ -568,8 +568,17 @@ async def build_database(req: BuildDBRequest, request: Request):
         raise HTTPException(status_code=400, detail="No readable text found in indexable files")
 
     if req.force:
-        # overwrite chunks.jsonl
-        pass
+        # explicitly remove old simple index files
+        try:
+            if os.path.exists(_db_chunks_path(req.name)):
+                os.remove(_db_chunks_path(req.name))
+        except Exception:
+            pass
+        try:
+            if os.path.exists(_db_stats_path(req.name)):
+                os.remove(_db_stats_path(req.name))
+        except Exception:
+            pass
 
     chunk_count = _write_chunks(req.name, records)
 
