@@ -39,3 +39,8 @@ AUTH_ALLOWED_DOMAINS = {
     for d in (os.getenv("AUTH_ALLOWED_DOMAINS", "tamu.edu")).split(",")
     if d.strip()
 }
+
+# --- Azure / Hardware Integration ---
+AZURE_BACKEND_URL = os.getenv("AZURE_BACKEND_URL", "http://localhost:5000") # Adjust to your Azure endpoint
+INPUT_MODE = os.getenv("INPUT_MODE", "keyboard") # Change to "voice" when using the USB mic
+SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyUSB0")

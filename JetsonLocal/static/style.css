@@ -1,0 +1,45 @@
+:root {
+    --bg: #f4f2f1;
+    --text: #1a1a1a;
+    --muted-text: #5b5b5b;
+    --card-bg: #fbfbfb;
+    --card-border: rgba(0,0,0,0.10);
+    --accent: #7a0000;
+    --shadow: 0 12px 26px rgba(90,0,0,0.10);
+    --card-radius: 14px;
+}
+
+body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard-page { padding: 24px; }
+.dashboard-section { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; height: 100%; }
+
+.aura-header { display: flex; justify-content: space-between; margin-bottom: 18px; }
+.aura-panel { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 18px 22px; border-radius: 18px; background: var(--card-bg); border: 1px solid var(--card-border); box-shadow: var(--shadow); }
+.aura-title { margin: 0; font-size: 28px; }
+.aura-sub { margin-top: 6px; font-size: 13px; color: var(--muted-text); }
+
+.status-indicator { padding: 8px 16px; border-radius: 20px; font-weight: bold; background-color: var(--accent); color: white; }
+
+.dashboard-cards { margin-bottom: 20px; }
+.filo-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.filo-item { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--card-radius); padding: 12px; box-shadow: var(--shadow); }
+.filo-label { font-size: 13px; color: var(--muted-text); }
+.filo-value { margin-top: 8px; font-size: 22px; font-weight: 800; color: var(--text); }
+
+.chat-box { flex-grow: 1; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: var(--card-radius); padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; box-shadow: var(--shadow); }
+
+.message { display: flex; width: 100%; }
+.message.user { justify-content: flex-end; }
+.message.ai { justify-content: flex-start; }
+.bubble { max-width: 80%; padding: 12px 18px; border-radius: 8px; font-size: 1.1rem; line-height: 1.4; }
+.message.user .bubble { background-color: var(--accent); color: white; border-bottom-right-radius: 0; }
+.message.ai .bubble { background-color: #e2e2e2; color: var(--text); border-bottom-left-radius: 0; }

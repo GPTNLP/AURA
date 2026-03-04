@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="tamu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AURA Core System</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="dashboard-page">
+    <div class="dashboard-section">
+        <div class="aura-header">
+            <div class="aura-panel">
+                <div class="aura-text">
+                    <h1 class="aura-title">AURA Edge Terminal</h1>
+                    <span class="aura-sub">Jetson Orin Nano Local Processing</span>
+                </div>
+                <div id="status-badge" class="status-indicator">Booting...</div>
+            </div>
+        </div>
+
+        <div class="dashboard-cards">
+            <div class="filo-grid">
+                <div class="filo-item">
+                    <div class="filo-top">
+                        <span class="filo-label">CPU Usage</span>
+                    </div>
+                    <div class="filo-value" id="cpu-val">--%</div>
+                </div>
+                <div class="filo-item">
+                    <div class="filo-top">
+                        <span class="filo-label">Active Model</span>
+                    </div>
+                    <div class="filo-value">llama3.2</div>
+                </div>
+                <div class="filo-item">
+                    <div class="filo-top">
+                        <span class="filo-label">Network</span>
+                    </div>
+                    <div class="filo-value" id="net-val">Offline</div>
+                </div>
+            </div>
+        </div>
+
+        <main id="chat-container" class="chat-box">
+            </main>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>
