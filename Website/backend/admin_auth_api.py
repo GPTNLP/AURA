@@ -11,7 +11,7 @@ from typing import Dict, Any, List
 from fastapi import APIRouter, Request, HTTPException, Response
 from pydantic import BaseModel
 
-from security import require_ip_allowlist, require_auth
+from security import require_ip_allowlist, require_auth, require_role
 from security_tokens import mint_app_token
 from hash_passwords import (
     verify_password as verify_pbkdf2_password,
@@ -19,9 +19,8 @@ from hash_passwords import (
 )
 from otp_store import OTPStore, hash_code
 
-from config import ADMIN_USERS_PATH, ensure_storage_layout  # persistent path + auto-create
+from config import ADMIN_USERS_PATH, ensure_storage_layout
 
-# Load .env ONLY for local dev; Azure uses App Settings (env vars).
 try:
     from dotenv import load_dotenv
 except Exception:
@@ -33,53 +32,54 @@ if env in ("", "dev", "local") and load_dotenv is not None:
     if env_path.exists():
         load_dotenv(env_path)
 
-# SMTP settings
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 
-# Admin settings
 ADMIN_OTP_TTL_SECONDS = int(os.getenv("ADMIN_OTP_TTL_SECONDS", "300"))
 ADMIN_MAX_OTP_ATTEMPTS = int(os.getenv("ADMIN_MAX_OTP_ATTEMPTS", "5"))
 
-# Simple IP rate limit (per window)
 ADMIN_LOGIN_RATE_WINDOW = int(os.getenv("ADMIN_LOGIN_RATE_WINDOW", "300"))
 ADMIN_LOGIN_RATE_MAX = int(os.getenv("ADMIN_LOGIN_RATE_MAX", "10"))
 
-# Cookie settings
 COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "aura_token")
-COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax")  # lax/strict/none
-COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "")         # optional
+COOKIE_SAMESITE = os.getenv("AUTH_COOKIE_SAMESITE", "lax")
+COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "")
 
 router = APIRouter(prefix="/auth/admin", tags=["admin-auth"])
 otp_store = OTPStore(prefix="adminotp")
+
 
 class AdminLoginRequest(BaseModel):
     email: str
     password: str
 
+
 class AdminVerifyRequest(BaseModel):
     email: str
     otp: str
 
-# Admin management (admin-only)
+
 class AdminCreateRequest(BaseModel):
     email: str
     password: str
 
+
 class AdminPublic(BaseModel):
     email: str
 
-# --- Simple in-memory rate store ---
+
 _RATE: Dict[str, Dict[str, Any]] = {}
+
 
 def _client_ip(request: Request) -> str:
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         return xff.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
 
 def _rate_limit_or_429(ip: str):
     now = int(time.time())
@@ -90,6 +90,7 @@ def _rate_limit_or_429(ip: str):
     rec["count"] += 1
     if rec["count"] > ADMIN_LOGIN_RATE_MAX:
         raise HTTPException(status_code=429, detail="Too many requests")
+
 
 def _send_otp_email(to_email: str, code: str):
     if not SMTP_HOST or not SMTP_USER or not SMTP_PASS:
@@ -110,16 +111,17 @@ def _send_otp_email(to_email: str, code: str):
         server.login(SMTP_USER, SMTP_PASS)
         server.send_message(msg)
 
+
 def _should_secure_cookie(request: Request) -> bool:
     envv = (os.getenv("ENV", "") or "").lower()
     if envv in ("prod", "production"):
         return True
     return request.url.scheme == "https"
 
+
 def _read_admin_store() -> Dict[str, Any]:
     ensure_storage_layout()
 
-    # Auto-create if missing
     if not ADMIN_USERS_PATH.exists():
         ADMIN_USERS_PATH.write_text('{"admins":[]}\n', encoding="utf-8")
 
@@ -135,7 +137,6 @@ def _read_admin_store() -> Dict[str, Any]:
     if not isinstance(admins_list, list):
         raise HTTPException(status_code=500, detail="Admin store invalid format (admins must be a list)")
 
-    # normalize list items
     cleaned: List[Dict[str, str]] = []
     for a in admins_list:
         if not isinstance(a, dict):
@@ -148,11 +149,13 @@ def _read_admin_store() -> Dict[str, Any]:
     data["admins"] = cleaned
     return data
 
+
 def _write_admin_store(data: Dict[str, Any]) -> None:
     ensure_storage_layout()
     tmp = ADMIN_USERS_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     tmp.replace(ADMIN_USERS_PATH)
+
 
 def _load_admins_map() -> Dict[str, str]:
     data = _read_admin_store()
@@ -164,17 +167,11 @@ def _load_admins_map() -> Dict[str, str]:
             out[email] = ph
     return out
 
+
 def _require_admin(request: Request) -> Dict[str, Any]:
     require_ip_allowlist(request)
-    payload = require_auth(request)
-    role = (payload.get("role") or "").lower()
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-    return payload
+    return require_role(request, "admin")
 
-# -----------------------
-# Auth flow (existing)
-# -----------------------
 
 @router.post("/login")
 async def login(data: AdminLoginRequest, request: Request):
@@ -204,6 +201,7 @@ async def login(data: AdminLoginRequest, request: Request):
     _send_otp_email(email, code)
 
     return {"message": "OTP sent", "otp_expires_in": ADMIN_OTP_TTL_SECONDS}
+
 
 @router.post("/verify")
 async def verify(data: AdminVerifyRequest, request: Request, response: Response):
@@ -253,6 +251,7 @@ async def verify(data: AdminVerifyRequest, request: Request, response: Response)
 
     return {"token": token, "user": result["user"], "expires_in": result["expires_in"]}
 
+
 @router.get("/me")
 def me(request: Request):
     require_ip_allowlist(request)
@@ -262,14 +261,12 @@ def me(request: Request):
         "exp": payload.get("exp"),
     }
 
+
 @router.post("/logout")
 def logout(response: Response):
     response.delete_cookie(COOKIE_NAME)
     return {"ok": True}
 
-# -----------------------
-# Admin management (NEW)
-# -----------------------
 
 @router.get("/admins")
 def list_admins(request: Request):
@@ -278,6 +275,7 @@ def list_admins(request: Request):
     admins = sorted({(a.get("email") or "").strip().lower() for a in data.get("admins", []) if isinstance(a, dict)})
     admins = [e for e in admins if e]
     return {"admins": [{"email": e} for e in admins]}
+
 
 @router.post("/admins")
 def add_admin(req: AdminCreateRequest, request: Request):
@@ -309,6 +307,7 @@ def add_admin(req: AdminCreateRequest, request: Request):
     _write_admin_store(data)
 
     return {"ok": True, "added": {"email": email}}
+
 
 @router.delete("/admins/{email}")
 def remove_admin(email: str, request: Request):

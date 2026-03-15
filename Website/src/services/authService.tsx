@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState, useCallback } from "react";
 import type { ReactNode } from "react";
 
 export type Role = "admin" | "ta" | "student";
@@ -11,20 +11,21 @@ interface User {
 interface AuthContextType {
   user: User | null;
   token: string | null;
+  authReady: boolean;
 
-  // Admin flow (email + password -> otp)
+  // Admin flow
   adminStartLogin: (email: string, password: string) => Promise<void>;
   adminVerifyOtp: (email: string, otp: string) => Promise<void>;
 
-  // TA flow (email -> otp), TA-only endpoints
+  // TA flow
   taStartLogin: (email: string) => Promise<void>;
   taVerifyOtp: (email: string, otp: string) => Promise<void>;
 
-  // Student flow (email -> otp), ALWAYS student
+  // Student flow
   studentStartLogin: (email: string) => Promise<void>;
   studentVerifyOtp: (email: string, otp: string) => Promise<void>;
 
-  refreshMe: () => Promise<void>;
+  refreshMe: () => Promise<User | null>;
   logout: () => void;
 }
 
@@ -62,52 +63,63 @@ async function readError(res: Response, fallback: string) {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(LS_TOKEN));
-
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem(LS_USER);
     return stored ? (JSON.parse(stored) as User) : null;
   });
+  const [authReady, setAuthReady] = useState(false);
 
-  const setSession = (t: string, u: User) => {
+  const setSession = useCallback((t: string, u: User) => {
     setToken(t);
     setUser(u);
     localStorage.setItem(LS_TOKEN, t);
     localStorage.setItem(LS_USER, JSON.stringify(u));
-  };
+  }, []);
 
-  const clearSession = () => {
+  const clearSession = useCallback(() => {
     setToken(null);
     setUser(null);
     localStorage.removeItem(LS_TOKEN);
     localStorage.removeItem(LS_USER);
-  };
+  }, []);
 
-  const refreshMe = async () => {
-    if (!token) {
-      setUser(null);
-      return;
+  const refreshMe = useCallback(async (): Promise<User | null> => {
+    const currentToken = localStorage.getItem(LS_TOKEN);
+
+    if (!currentToken) {
+      clearSession();
+      return null;
     }
 
-    const res = await fetch(`${API_BASE}/auth/me`, {
-      headers: authHeaders(token),
-      credentials: "include",
-    });
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`, {
+        headers: authHeaders(currentToken),
+        credentials: "include",
+      });
 
-    if (res.ok) {
-      const data = await res.json().catch(() => null);
-      if (data?.user) {
-        setUser(data.user as User);
-        localStorage.setItem(LS_USER, JSON.stringify(data.user));
+      if (!res.ok) {
+        clearSession();
+        return null;
       }
-      return;
+
+      const data = await res.json().catch(() => null);
+      const nextUser = data?.user as User | undefined;
+
+      if (!nextUser?.email || !nextUser?.role) {
+        clearSession();
+        return null;
+      }
+
+      setToken(currentToken);
+      setUser(nextUser);
+      localStorage.setItem(LS_USER, JSON.stringify(nextUser));
+      return nextUser;
+    } catch {
+      clearSession();
+      return null;
     }
+  }, [clearSession]);
 
-    clearSession();
-  };
-
-  // -----------------------
-  // Admin OTP
-  // -----------------------
   const adminStartLogin = async (email: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/admin/login`, {
       method: "POST",
@@ -135,9 +147,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(data.token as string, data.user as User);
   };
 
-  // -----------------------
-  // Student OTP (ALWAYS student role)
-  // -----------------------
   const studentStartLogin = async (email: string) => {
     const res = await fetch(`${API_BASE}/auth/student/start`, {
       method: "POST",
@@ -165,9 +174,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(data.token as string, data.user as User);
   };
 
-  // -----------------------
-  // TA OTP (TA-only endpoints)
-  // -----------------------
   const taStartLogin = async (email: string) => {
     const res = await fetch(`${API_BASE}/auth/ta/start`, {
       method: "POST",
@@ -195,12 +201,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(data.token as string, data.user as User);
   };
 
-  const logout = () => clearSession();
+  const logout = useCallback(() => {
+    clearSession();
+  }, [clearSession]);
+
+  const bootstrapAuth = useCallback(async () => {
+    if (!localStorage.getItem(LS_TOKEN)) {
+      clearSession();
+      setAuthReady(true);
+      return;
+    }
+
+    await refreshMe();
+    setAuthReady(true);
+  }, [clearSession, refreshMe]);
+
+  useMemo(() => {
+    void bootstrapAuth();
+  }, [bootstrapAuth]);
 
   const value = useMemo(
     () => ({
       user,
       token,
+      authReady,
       adminStartLogin,
       adminVerifyOtp,
       studentStartLogin,
@@ -210,7 +234,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshMe,
       logout,
     }),
-    [user, token]
+    [user, token, authReady, refreshMe, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

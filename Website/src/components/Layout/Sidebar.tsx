@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../services/authService";
 import { useEffect, useState } from "react";
 import "../../styles/sidebar.css";
@@ -7,6 +7,8 @@ const LS_SIDEBAR_COLLAPSED = "aura-sidebar-collapsed";
 
 export default function Sidebar() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const role = user?.role;
   const isAdmin = role === "admin";
@@ -18,11 +20,32 @@ export default function Sidebar() {
 
   useEffect(() => {
     localStorage.setItem(LS_SIDEBAR_COLLAPSED, collapsed ? "1" : "0");
-
     document.documentElement.style.setProperty("--sidebar-width", collapsed ? "72px" : "240px");
   }, [collapsed]);
 
-  const linkClass = ({ isActive }: { isActive: boolean }) => `sidebar-link ${isActive ? "active" : ""}`;
+  useEffect(() => {
+    const path = location.pathname;
+
+    const adminOnly =
+      path === "/control" ||
+      path === "/logs" ||
+      path.startsWith("/admin/");
+
+    const taOrAdminOnly =
+      path === "/database" || path === "/files";
+
+    if (adminOnly && !isAdmin) {
+      navigate("/dashboard", { replace: true });
+      return;
+    }
+
+    if (taOrAdminOnly && !(isAdmin || isTA)) {
+      navigate("/dashboard", { replace: true });
+    }
+  }, [location.pathname, isAdmin, isTA, navigate]);
+
+  const linkClass = ({ isActive }: { isActive: boolean }) =>
+    `sidebar-link ${isActive ? "active" : ""}`;
 
   const adminLinkClass = ({ isActive }: { isActive: boolean }) =>
     `sidebar-link admin-link ${isActive ? "active" : ""}`;
@@ -31,7 +54,6 @@ export default function Sidebar() {
 
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
-      {/* ===== Top Section ===== */}
       <div className="sidebar-top">
         <div className="sidebar-brand">
           <h1 className="sidebar-title">AURA</h1>
@@ -49,9 +71,7 @@ export default function Sidebar() {
         </button>
       </div>
 
-      {/* ===== Navigation ===== */}
       <nav className="sidebar-nav">
-        {/* Core Section */}
         <div className="sidebar-section">
           {!collapsed && <span className="sidebar-section-title">Core</span>}
 
@@ -59,7 +79,6 @@ export default function Sidebar() {
             <span className="sidebar-link-text">Dashboard</span>
           </NavLink>
 
-          {/* Control is admin-only (matches AppRouter) */}
           {isAdmin && (
             <NavLink to="/control" className={linkClass}>
               <span className="sidebar-link-text">Control</span>
@@ -71,7 +90,6 @@ export default function Sidebar() {
           </NavLink>
         </div>
 
-        {/* AI System Section */}
         <div className="sidebar-section">
           {!collapsed && <span className="sidebar-section-title">AI System</span>}
 
@@ -79,7 +97,6 @@ export default function Sidebar() {
             <span className="sidebar-link-text">Simulator</span>
           </NavLink>
 
-          {/* Database = admin + TA only */}
           {(isAdmin || isTA) && (
             <NavLink to="/database" className={linkClass}>
               <span className="sidebar-link-text">Database</span>
@@ -87,7 +104,6 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* Admin Section */}
         {isAdmin && (
           <div className="sidebar-section">
             {!collapsed && <span className="sidebar-section-title">Admin</span>}
@@ -100,16 +116,13 @@ export default function Sidebar() {
               <span className="sidebar-link-text">TA Manager</span>
             </NavLink>
 
-            {/* ✅ NEW: Admins manager */}
             <NavLink to="/admin/admins" className={adminLinkClass}>
               <span className="sidebar-link-text">Admins</span>
             </NavLink>
           </div>
         )}
 
-        {/* Bottom */}
         <div className="sidebar-bottom">
-          {/* ✅ Settings now available to ALL logged-in users */}
           <NavLink to="/settings" className={linkClass}>
             <span className="sidebar-link-text">Settings</span>
           </NavLink>

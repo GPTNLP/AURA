@@ -1,25 +1,26 @@
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 
-from security import require_auth, require_ip_allowlist
+from security import require_ip_allowlist, require_role
 from ta_store import list_ta_items, add_ta, remove_ta
 
 router = APIRouter(prefix="/admin/ta", tags=["admin-ta"])
 
+
 class TaReq(BaseModel):
     email: str
 
+
 def _require_admin(request: Request):
     require_ip_allowlist(request)
-    payload = require_auth(request)
-    if payload.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin only")
-    return payload
+    return require_role(request, "admin")
+
 
 @router.get("/list")
 def ta_list(request: Request):
     _require_admin(request)
     return {"items": list_ta_items()}
+
 
 @router.post("/add")
 def ta_add(req: TaReq, request: Request):
@@ -31,6 +32,7 @@ def ta_add(req: TaReq, request: Request):
     admin_email = (payload.get("sub") or "").strip().lower()
     add_ta(email, added_by=admin_email)
     return {"ok": True, "items": list_ta_items()}
+
 
 @router.post("/remove")
 def ta_remove(req: TaReq, request: Request):

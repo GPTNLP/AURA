@@ -19,46 +19,57 @@ import DatabasePage from "../pages/DatabasePage";
 import ChatLogsPage from "../pages/ChatLogsPage";
 import SimulatorPage from "../pages/SimulatorPage";
 import TAManagePage from "../pages/TAManagePage";
-import AdminsPage from "../pages/AdminsPage"; // ✅ NEW
+import AdminsPage from "../pages/AdminsPage";
 
 type Role = "admin" | "ta" | "student";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { token, refreshMe } = useAuth();
+  const { token, user, refreshMe } = useAuth();
   const location = useLocation();
-  const [ready, setReady] = useState(false);
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    let alive = true;
+    let cancelled = false;
 
     (async () => {
       if (!token) {
-        if (alive) setReady(true);
+        if (!cancelled) setChecking(false);
         return;
       }
-      try {
-        await refreshMe();
-      } finally {
-        if (alive) setReady(true);
-      }
+
+      await refreshMe();
+
+      if (!cancelled) setChecking(false);
     })();
 
     return () => {
-      alive = false;
+      cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, refreshMe]);
 
-  if (!token) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
-  if (!ready) return null;
+  if (!token) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+
+  if (checking) return null;
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
 
   return <>{children}</>;
 }
 
 function RequireRole({ allow, children }: { allow: Role[]; children: React.ReactNode }) {
   const { user } = useAuth();
-  if (!user) return null;
-  if (!allow.includes(user.role as Role)) return <Navigate to="/dashboard" replace />;
+
+  if (!user) return <Navigate to="/login" replace />;
+
+  const role = user.role as Role;
+  if (!allow.includes(role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return <>{children}</>;
 }
 
@@ -84,8 +95,6 @@ export default function AppRouter() {
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="camera" element={<CameraPage />} />
         <Route path="simulator" element={<SimulatorPage />} />
-
-        {/* ✅ Settings for ALL logged-in users */}
         <Route path="settings" element={<SettingsPage />} />
 
         {/* Admin-only */}
@@ -113,8 +122,6 @@ export default function AppRouter() {
             </RequireRole>
           }
         />
-
-        {/* ✅ NEW: Admin Management (admins only) */}
         <Route
           path="admin/admins"
           element={
@@ -134,9 +141,7 @@ export default function AppRouter() {
           }
         />
 
-        {/* Old alias */}
         <Route path="files" element={<Navigate to="/database" replace />} />
-
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
 
