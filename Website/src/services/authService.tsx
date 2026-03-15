@@ -1,4 +1,11 @@
-import { createContext, useContext, useMemo, useState, useCallback } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+} from "react";
 import type { ReactNode } from "react";
 
 export type Role = "admin" | "ta" | "student";
@@ -8,25 +15,28 @@ interface User {
   role: Role;
 }
 
+export interface PortalHint {
+  has_admin_access?: boolean;
+  has_ta_access?: boolean;
+  notice?: string | null;
+}
+
 interface AuthContextType {
   user: User | null;
   token: string | null;
   authReady: boolean;
 
-  // Admin flow
   adminStartLogin: (email: string, password: string) => Promise<void>;
   adminVerifyOtp: (email: string, otp: string) => Promise<void>;
 
-  // TA flow
-  taStartLogin: (email: string) => Promise<void>;
-  taVerifyOtp: (email: string, otp: string) => Promise<void>;
+  taStartLogin: (email: string) => Promise<PortalHint>;
+  taVerifyOtp: (email: string, otp: string) => Promise<PortalHint>;
 
-  // Student flow
-  studentStartLogin: (email: string) => Promise<void>;
-  studentVerifyOtp: (email: string, otp: string) => Promise<void>;
+  studentStartLogin: (email: string) => Promise<PortalHint>;
+  studentVerifyOtp: (email: string, otp: string) => Promise<PortalHint>;
 
   refreshMe: () => Promise<User | null>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>(null as any);
@@ -142,12 +152,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) throw new Error(await readError(res, "Invalid OTP"));
 
     const data = await res.json().catch(() => null);
-    if (!data?.token || !data?.user) throw new Error("Server did not return a session token");
+    if (!data?.token || !data?.user) {
+      throw new Error("Server did not return a session token");
+    }
 
     setSession(data.token as string, data.user as User);
   };
 
-  const studentStartLogin = async (email: string) => {
+  const studentStartLogin = async (email: string): Promise<PortalHint> => {
     const res = await fetch(`${API_BASE}/auth/student/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -156,9 +168,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) throw new Error(await readError(res, "Student login failed"));
+
+    const data = await res.json().catch(() => null);
+    return {
+      has_admin_access: !!data?.has_admin_access,
+      has_ta_access: !!data?.has_ta_access,
+      notice: data?.notice || null,
+    };
   };
 
-  const studentVerifyOtp = async (email: string, otp: string) => {
+  const studentVerifyOtp = async (email: string, otp: string): Promise<PortalHint> => {
     const res = await fetch(`${API_BASE}/auth/student/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -169,12 +188,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) throw new Error(await readError(res, "Invalid OTP"));
 
     const data = await res.json().catch(() => null);
-    if (!data?.token || !data?.user) throw new Error("Server did not return a session token");
+    if (!data?.token || !data?.user) {
+      throw new Error("Server did not return a session token");
+    }
 
     setSession(data.token as string, data.user as User);
+
+    return {
+      has_admin_access: !!data?.has_admin_access,
+      has_ta_access: !!data?.has_ta_access,
+      notice: data?.notice || null,
+    };
   };
 
-  const taStartLogin = async (email: string) => {
+  const taStartLogin = async (email: string): Promise<PortalHint> => {
     const res = await fetch(`${API_BASE}/auth/ta/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -183,9 +210,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) throw new Error(await readError(res, "TA login failed"));
+
+    const data = await res.json().catch(() => null);
+    return {
+      has_admin_access: !!data?.has_admin_access,
+      notice: data?.notice || null,
+    };
   };
 
-  const taVerifyOtp = async (email: string, otp: string) => {
+  const taVerifyOtp = async (email: string, otp: string): Promise<PortalHint> => {
     const res = await fetch(`${API_BASE}/auth/ta/verify`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -196,29 +229,90 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) throw new Error(await readError(res, "Invalid OTP"));
 
     const data = await res.json().catch(() => null);
-    if (!data?.token || !data?.user) throw new Error("Server did not return a session token");
-
-    setSession(data.token as string, data.user as User);
-  };
-
-  const logout = useCallback(() => {
-    clearSession();
-  }, [clearSession]);
-
-  const bootstrapAuth = useCallback(async () => {
-    if (!localStorage.getItem(LS_TOKEN)) {
-      clearSession();
-      setAuthReady(true);
-      return;
+    if (!data?.token || !data?.user) {
+      throw new Error("Server did not return a session token");
     }
 
-    await refreshMe();
-    setAuthReady(true);
+    setSession(data.token as string, data.user as User);
+
+    return {
+      has_admin_access: !!data?.has_admin_access,
+      notice: data?.notice || null,
+    };
+  };
+
+  const logout = useCallback(async () => {
+    try {
+      await fetch(`${API_BASE}/auth/admin/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // ignore backend logout failure; still clear local session
+    } finally {
+      clearSession();
+    }
+  }, [clearSession]);
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      if (!localStorage.getItem(LS_TOKEN)) {
+        if (alive) {
+          clearSession();
+          setAuthReady(true);
+        }
+        return;
+      }
+
+      await refreshMe();
+
+      if (alive) {
+        setAuthReady(true);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
   }, [clearSession, refreshMe]);
 
-  useMemo(() => {
-    void bootstrapAuth();
-  }, [bootstrapAuth]);
+  useEffect(() => {
+    if (!authReady) return;
+
+    const interval = window.setInterval(() => {
+      void refreshMe();
+    }, 60000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [authReady, refreshMe]);
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === LS_TOKEN || e.key === LS_USER) {
+        const nextToken = localStorage.getItem(LS_TOKEN);
+        const nextUserRaw = localStorage.getItem(LS_USER);
+
+        setToken(nextToken);
+
+        if (nextUserRaw) {
+          try {
+            setUser(JSON.parse(nextUserRaw) as User);
+          } catch {
+            setUser(null);
+          }
+        } else {
+          setUser(null);
+        }
+      }
+    };
+
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const value = useMemo(
     () => ({

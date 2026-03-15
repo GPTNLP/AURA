@@ -10,11 +10,12 @@ function isTamuEmail(email: string) {
 }
 
 export default function LoginTAPage() {
-  const { taStartLogin, taVerifyOtp, refreshMe, user, logout } = useAuth();
+  const { taStartLogin, taVerifyOtp, refreshMe, logout } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [showOtp, setShowOtp] = useState(false);
@@ -24,16 +25,18 @@ export default function LoginTAPage() {
   const start = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     setLoading(true);
 
     try {
       const em = email.trim().toLowerCase();
       if (!isTamuEmail(em)) throw new Error("Please use your @tamu.edu email.");
 
-      await taStartLogin(em);
+      const hint = await taStartLogin(em);
 
       setOtpEmail(em);
       setOtpError(null);
+      setNotice(hint.notice || null);
       setShowOtp(true);
     } catch (err: any) {
       setError(err?.message || "TA login failed.");
@@ -44,21 +47,18 @@ export default function LoginTAPage() {
 
   const verify = async (otp: string) => {
     setOtpError(null);
+
     try {
-      await taVerifyOtp(otpEmail, otp);
+      const hint = await taVerifyOtp(otpEmail, otp);
+      const me = await refreshMe();
 
-      // Pull the current user/role from backend
-      await refreshMe();
-
-      // Extra safety: if somehow not TA, force logout
-      if (user?.role && user.role !== "ta") {
-        logout();
-        throw new Error("This account is not authorized as a TA.");
+      if (me?.role && me.role !== "ta") {
+        await logout();
+        throw new Error(hint.notice || "Please use the correct login portal for your account.");
       }
 
+      setNotice(hint.notice || notice);
       setShowOtp(false);
-
-      // TA should land somewhere they can access
       navigate("/database", { replace: true });
     } catch (err: any) {
       setOtpError(err?.message || "Invalid OTP");
@@ -87,6 +87,23 @@ export default function LoginTAPage() {
           />
 
           {error && <div className="login-error">{error}</div>}
+
+          {notice && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: "10px 12px",
+                borderRadius: 10,
+                background: "rgba(255, 193, 7, 0.14)",
+                border: "1px solid rgba(255, 193, 7, 0.38)",
+                color: "#6b4f00",
+                fontSize: "0.95rem",
+                lineHeight: 1.4,
+              }}
+            >
+              {notice}
+            </div>
+          )}
 
           <button className="login-btn" type="submit" disabled={loading}>
             {loading ? "Sending code..." : "Send Code"}

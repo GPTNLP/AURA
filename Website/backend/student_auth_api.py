@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request, HTTPException, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from security import require_ip_allowlist, domain_allowed
+from security import require_ip_allowlist, domain_allowed, resolve_current_role
 from security_tokens import mint_app_token
 from otp_store import OTPStore, hash_code
 
@@ -27,7 +27,7 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASS = os.getenv("SMTP_PASS", "")
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 
-STUDENT_OTP_TTL_SECONDS = int(os.getenv("STUDENT_OTP_TTL_SECONDS", "300"))  # 5 min
+STUDENT_OTP_TTL_SECONDS = int(os.getenv("STUDENT_OTP_TTL_SECONDS", "300"))
 STUDENT_MAX_OTP_ATTEMPTS = int(os.getenv("STUDENT_MAX_OTP_ATTEMPTS", "6"))
 
 COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "aura_token")
@@ -37,18 +37,22 @@ COOKIE_DOMAIN = os.getenv("AUTH_COOKIE_DOMAIN", "")
 router = APIRouter(prefix="/auth/student", tags=["student-auth"])
 otp_store = OTPStore(prefix="studentotp")
 
+
 class StudentStartReq(BaseModel):
     email: str
+
 
 class StudentVerifyReq(BaseModel):
     email: str
     otp: str
+
 
 def _should_secure_cookie(request: Request) -> bool:
     env = (os.getenv("ENV", "") or "").lower()
     if env in ("prod", "production"):
         return True
     return request.url.scheme == "https"
+
 
 def _send_otp_email(to_email: str, code: str):
     if not SMTP_HOST or not SMTP_USER or not SMTP_PASS:
@@ -60,7 +64,7 @@ def _send_otp_email(to_email: str, code: str):
     msg["To"] = to_email
     msg.set_content(
         f"Your AURA login code is: {code}\n\n"
-        f"This code expires in {max(1, STUDENT_OTP_TTL_SECONDS//60)} minutes.\n"
+        f"This code expires in {max(1, STUDENT_OTP_TTL_SECONDS // 60)} minutes.\n"
         f"If you did not request this, ignore this email."
     )
 
@@ -68,6 +72,26 @@ def _send_otp_email(to_email: str, code: str):
         server.starttls()
         server.login(SMTP_USER, SMTP_PASS)
         server.send_message(msg)
+
+
+def _portal_hints(email: str) -> Dict[str, Any]:
+    role = resolve_current_role(email)
+
+    has_admin_access = role == "admin"
+    has_ta_access = role == "ta"
+
+    notice = None
+    if has_admin_access:
+        notice = "This account also has admin access. Use Admin Login for full portal access."
+    elif has_ta_access:
+        notice = "This account also has TA access. Use TA Login for TA tools."
+
+    return {
+        "has_admin_access": has_admin_access,
+        "has_ta_access": has_ta_access,
+        "notice": notice,
+    }
+
 
 @router.post("/start")
 async def start(data: StudentStartReq, request: Request):
@@ -77,7 +101,6 @@ async def start(data: StudentStartReq, request: Request):
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Enter your TAMU email")
 
-    # ✅ only @tamu.edu (controlled by AUTH_ALLOWED_DOMAINS)
     if not domain_allowed(email):
         raise HTTPException(status_code=403, detail="Only @tamu.edu emails are allowed")
 
@@ -85,7 +108,12 @@ async def start(data: StudentStartReq, request: Request):
     otp_store.set(email=email, code=code, ttl_seconds=STUDENT_OTP_TTL_SECONDS)
     _send_otp_email(email, code)
 
-    return {"message": "OTP sent", "otp_expires_in": STUDENT_OTP_TTL_SECONDS}
+    return {
+        "message": "OTP sent",
+        "otp_expires_in": STUDENT_OTP_TTL_SECONDS,
+        **_portal_hints(email),
+    }
+
 
 @router.post("/verify")
 async def verify(data: StudentVerifyReq, request: Request, response: Response):
@@ -104,7 +132,7 @@ async def verify(data: StudentVerifyReq, request: Request, response: Response):
     if not rec:
         raise HTTPException(status_code=401, detail="Invalid code")
 
-    if int(rec.get("expires", 0)) and time.time() > int(rec["expires"]):
+    if int(rec.get("expires", 0) or 0) and time.time() > int(rec["expires"]):
         otp_store.delete(email)
         raise HTTPException(status_code=401, detail="Invalid code")
 
@@ -118,7 +146,6 @@ async def verify(data: StudentVerifyReq, request: Request, response: Response):
 
     otp_store.delete(email)
 
-    # ✅ Student login ALWAYS mints student role
     result = mint_app_token(email=email, role="student")
     token = result["token"]
 
@@ -137,4 +164,9 @@ async def verify(data: StudentVerifyReq, request: Request, response: Response):
         **cookie_kwargs,
     )
 
-    return {"token": token, "user": result["user"], "expires_in": result["expires_in"]}
+    return {
+        "token": token,
+        "user": result["user"],
+        "expires_in": result["expires_in"],
+        **_portal_hints(email),
+    }

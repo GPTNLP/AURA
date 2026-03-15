@@ -10,11 +10,12 @@ function isTamuEmail(email: string) {
 }
 
 export default function LoginStudentPage() {
-  const { studentStartLogin, studentVerifyOtp, refreshMe, user, logout } = useAuth();
+  const { studentStartLogin, studentVerifyOtp, refreshMe, logout } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const [showOtp, setShowOtp] = useState(false);
@@ -24,16 +25,18 @@ export default function LoginStudentPage() {
   const start = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     setLoading(true);
 
     try {
       const em = email.trim().toLowerCase();
       if (!isTamuEmail(em)) throw new Error("Please use your @tamu.edu email.");
 
-      await studentStartLogin(em);
+      const hint = await studentStartLogin(em);
 
       setOtpEmail(em);
       setOtpError(null);
+      setNotice(hint.notice || null);
       setShowOtp(true);
     } catch (err: any) {
       setError(err?.message || "Student login failed.");
@@ -44,18 +47,17 @@ export default function LoginStudentPage() {
 
   const verify = async (otp: string) => {
     setOtpError(null);
+
     try {
-      await studentVerifyOtp(otpEmail, otp);
+      const hint = await studentVerifyOtp(otpEmail, otp);
+      const me = await refreshMe();
 
-      // Sync role/user from backend right away
-      await refreshMe();
-
-      // Extra safety: student portal should never become TA/admin
-      if (user?.role && user.role !== "student") {
-        logout();
-        throw new Error("Please use the correct login portal for your account.");
+      if (me?.role && me.role !== "student") {
+        await logout();
+        throw new Error(hint.notice || "Please use the correct login portal for your account.");
       }
 
+      setNotice(hint.notice || notice);
       setShowOtp(false);
       navigate("/dashboard", { replace: true });
     } catch (err: any) {
@@ -85,6 +87,23 @@ export default function LoginStudentPage() {
           />
 
           {error && <div className="login-error">{error}</div>}
+
+          {notice && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: "10px 12px",
+                borderRadius: 10,
+                background: "rgba(255, 193, 7, 0.14)",
+                border: "1px solid rgba(255, 193, 7, 0.38)",
+                color: "#6b4f00",
+                fontSize: "0.95rem",
+                lineHeight: 1.4,
+              }}
+            >
+              {notice}
+            </div>
+          )}
 
           <button className="login-btn" type="submit" disabled={loading}>
             {loading ? "Sending code..." : "Send Code"}

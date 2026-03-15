@@ -12,13 +12,12 @@ from fastapi import APIRouter, Request, HTTPException, Response
 from pydantic import BaseModel
 
 from security import require_ip_allowlist, require_auth, require_role
-from security_tokens import mint_app_token
+from security_tokens import mint_app_token, revoke_user_tokens
 from hash_passwords import (
     verify_password as verify_pbkdf2_password,
     hash_password as hash_pbkdf2_password,
 )
 from otp_store import OTPStore, hash_code
-
 from config import ADMIN_USERS_PATH, ensure_storage_layout
 
 try:
@@ -102,7 +101,7 @@ def _send_otp_email(to_email: str, code: str):
     msg["To"] = to_email
     msg.set_content(
         f"Your AURA admin login code is: {code}\n\n"
-        f"This code expires in {max(1, ADMIN_OTP_TTL_SECONDS//60)} minutes.\n"
+        f"This code expires in {max(1, ADMIN_OTP_TTL_SECONDS // 60)} minutes.\n"
         f"If you did not request this, ignore this email."
     )
 
@@ -137,14 +136,19 @@ def _read_admin_store() -> Dict[str, Any]:
     if not isinstance(admins_list, list):
         raise HTTPException(status_code=500, detail="Admin store invalid format (admins must be a list)")
 
-    cleaned: List[Dict[str, str]] = []
+    cleaned: List[Dict[str, Any]] = []
     for a in admins_list:
         if not isinstance(a, dict):
             continue
         email = (a.get("email") or "").strip().lower()
         ph = (a.get("password_hash") or "").strip()
         if email and ph:
-            cleaned.append({"email": email, "password_hash": ph})
+            cleaned.append({
+                "email": email,
+                "password_hash": ph,
+                "created_by": a.get("created_by"),
+                "created_at": a.get("created_at"),
+            })
 
     data["admins"] = cleaned
     return data
@@ -216,7 +220,7 @@ async def verify(data: AdminVerifyRequest, request: Request, response: Response)
     if not rec:
         raise invalid
 
-    if int(rec.get("expires", 0)) and time.time() > int(rec["expires"]):
+    if int(rec.get("expires", 0) or 0) and time.time() > int(rec["expires"]):
         otp_store.delete(email)
         raise invalid
 
@@ -234,7 +238,6 @@ async def verify(data: AdminVerifyRequest, request: Request, response: Response)
     token = result["token"]
 
     secure_cookie = _should_secure_cookie(request)
-
     cookie_kwargs: Dict[str, Any] = {}
     if COOKIE_DOMAIN.strip():
         cookie_kwargs["domain"] = COOKIE_DOMAIN.strip()
@@ -272,7 +275,11 @@ def logout(response: Response):
 def list_admins(request: Request):
     _require_admin(request)
     data = _read_admin_store()
-    admins = sorted({(a.get("email") or "").strip().lower() for a in data.get("admins", []) if isinstance(a, dict)})
+    admins = sorted({
+        (a.get("email") or "").strip().lower()
+        for a in data.get("admins", [])
+        if isinstance(a, dict)
+    })
     admins = [e for e in admins if e]
     return {"admins": [{"email": e} for e in admins]}
 
@@ -291,9 +298,12 @@ def add_admin(req: AdminCreateRequest, request: Request):
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     data = _read_admin_store()
-    admins_list: List[Dict[str, str]] = data.get("admins", [])
+    admins_list: List[Dict[str, Any]] = data.get("admins", [])
 
-    exists = any(isinstance(a, dict) and (a.get("email") or "").strip().lower() == email for a in admins_list)
+    exists = any(
+        isinstance(a, dict) and (a.get("email") or "").strip().lower() == email
+        for a in admins_list
+    )
     if exists:
         raise HTTPException(status_code=409, detail="Admin already exists")
 
@@ -305,6 +315,9 @@ def add_admin(req: AdminCreateRequest, request: Request):
     })
     data["admins"] = admins_list
     _write_admin_store(data)
+
+    # Kill any old sessions so new role takes effect cleanly
+    revoke_user_tokens(email)
 
     return {"ok": True, "added": {"email": email}}
 
@@ -322,9 +335,9 @@ def remove_admin(email: str, request: Request):
         raise HTTPException(status_code=400, detail="You cannot remove yourself")
 
     data = _read_admin_store()
-    admins_list: List[Dict[str, str]] = data.get("admins", [])
+    admins_list: List[Dict[str, Any]] = data.get("admins", [])
 
-    new_list: List[Dict[str, str]] = []
+    new_list: List[Dict[str, Any]] = []
     removed = False
     for a in admins_list:
         if not isinstance(a, dict):
@@ -340,5 +353,8 @@ def remove_admin(email: str, request: Request):
 
     data["admins"] = new_list
     _write_admin_store(data)
+
+    # Instantly kill all active sessions for the removed admin
+    revoke_user_tokens(target)
 
     return {"ok": True, "removed": {"email": target}}
