@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../services/authService";
 
@@ -24,36 +24,26 @@ import AdminsPage from "../pages/AdminsPage";
 type Role = "admin" | "ta" | "student";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { token, user, refreshMe } = useAuth();
+  const { token, user, authReady } = useAuth();
   const location = useLocation();
-  const [checking, setChecking] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      if (!token) {
-        if (!cancelled) setChecking(false);
-        return;
-      }
-
-      await refreshMe();
-
-      if (!cancelled) setChecking(false);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token, refreshMe]);
-
-  if (!token) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!authReady) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          background: "#0b1220",
+          color: "#fff",
+        }}
+      >
+        Loading...
+      </div>
+    );
   }
 
-  if (checking) return null;
-
-  if (!user) {
+  if (!token || !user) {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
@@ -61,9 +51,27 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function RequireRole({ allow, children }: { allow: Role[]; children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, authReady } = useAuth();
 
-  if (!user) return <Navigate to="/login" replace />;
+  if (!authReady) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          background: "#0b1220",
+          color: "#fff",
+        }}
+      >
+        Loading...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
 
   const role = user.role as Role;
   if (!allow.includes(role)) {

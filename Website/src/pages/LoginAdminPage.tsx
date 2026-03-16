@@ -6,7 +6,7 @@ import logo from "../assets/robot.png";
 import AdminOtpModal from "../components/AdminOtpModal";
 
 export default function LoginAdminPage() {
-  const { adminStartLogin, adminVerifyOtp } = useAuth();
+  const { adminStartLogin, adminVerifyOtp, refreshMe, logout } = useAuth();
   const navigate = useNavigate();
 
   const [email, setEmail] = useState("");
@@ -43,8 +43,17 @@ export default function LoginAdminPage() {
 
   const verify = async (otp: string) => {
     setOtpError(null);
+
     try {
       await adminVerifyOtp(otpEmail, otp);
+
+      const me = await refreshMe();
+
+      if (!me || me.role !== "admin") {
+        await logout();
+        throw new Error("This account is not authorized for the admin portal.");
+      }
+
       setShowOtp(false);
       navigate("/dashboard", { replace: true });
     } catch (err: any) {
