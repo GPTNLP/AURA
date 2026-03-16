@@ -316,9 +316,8 @@ def add_admin(req: AdminCreateRequest, request: Request):
     data["admins"] = admins_list
     _write_admin_store(data)
 
-    # Kill any old sessions so new role takes effect cleanly
-    revoke_user_tokens(email)
-
+    # Option B:
+    # do NOT revoke on promotion/add, so existing user session can stay alive
     return {"ok": True, "added": {"email": email}}
 
 
@@ -354,7 +353,7 @@ def remove_admin(email: str, request: Request):
     data["admins"] = new_list
     _write_admin_store(data)
 
-    # Instantly kill all active sessions for the removed admin
+    # Revoke on removal/demotion
     revoke_user_tokens(target)
 
     return {"ok": True, "removed": {"email": target}}
