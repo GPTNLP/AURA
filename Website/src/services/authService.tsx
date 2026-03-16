@@ -107,17 +107,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         credentials: "include",
       });
 
-      if (!res.ok) {
+      // Only clear auth on real auth failures
+      if (res.status === 401 || res.status === 403) {
         clearSession();
         return null;
+      }
+
+      // For transient backend/server issues, keep current session
+      if (!res.ok) {
+        return user;
       }
 
       const data = await res.json().catch(() => null);
       const nextUser = data?.user as User | undefined;
 
       if (!nextUser?.email || !nextUser?.role) {
-        clearSession();
-        return null;
+        return user;
       }
 
       setToken(currentToken);
@@ -125,10 +130,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(LS_USER, JSON.stringify(nextUser));
       return nextUser;
     } catch {
-      clearSession();
-      return null;
+      // Do NOT log out on temporary network failure
+      return user;
     }
-  }, [clearSession]);
+  }, [clearSession, user]);
 
   const adminStartLogin = async (email: string, password: string) => {
     const res = await fetch(`${API_BASE}/auth/admin/login`, {
@@ -248,7 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         credentials: "include",
       });
     } catch {
-      // ignore backend logout failure; still clear local session
+      // ignore backend logout failure
     } finally {
       clearSession();
     }

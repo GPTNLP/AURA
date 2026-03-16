@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 AUTH_SECRET = os.getenv("AUTH_SECRET", "")
-AUTH_TOKEN_TTL = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "3600"))  # default 1 hour
+AUTH_TOKEN_TTL = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "3600"))
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -34,15 +34,17 @@ def _revocations_path() -> Path:
 def _read_revocations() -> Dict[str, int]:
     path = _revocations_path()
     if not path.exists():
-      path.write_text("{}", encoding="utf-8")
+        path.write_text("{}", encoding="utf-8")
 
     try:
         raw = path.read_text(encoding="utf-8").strip()
         if not raw:
             return {}
+
         data = json.loads(raw)
         if not isinstance(data, dict):
             return {}
+
         out: Dict[str, int] = {}
         for k, v in data.items():
             email = (k or "").strip().lower()
@@ -65,10 +67,6 @@ def _write_revocations(data: Dict[str, int]) -> None:
 
 
 def revoke_user_tokens(email: str) -> int:
-    """
-    Invalidate all existing tokens for this user by recording a cutoff timestamp.
-    Any token with iat < cutoff is rejected.
-    """
     email = (email or "").strip().lower()
     if not email:
         return 0
@@ -101,6 +99,9 @@ def verify_token(token: str) -> Dict[str, Any]:
     if not AUTH_SECRET:
         raise RuntimeError("AUTH_SECRET missing")
 
+    if not token or "." not in token:
+        raise ValueError("Malformed token")
+
     raw_b64, sig_b64 = token.split(".", 1)
     raw = _b64url_decode(raw_b64)
     sig = _b64url_decode(sig_b64)
@@ -110,8 +111,10 @@ def verify_token(token: str) -> Dict[str, Any]:
         raise ValueError("Invalid token signature")
 
     payload = json.loads(raw.decode("utf-8"))
+
     exp = int(payload.get("exp", 0) or 0)
-    if exp and time.time() > exp:
+    now = int(time.time())
+    if exp and now >= exp:
         raise ValueError("Token expired")
 
     email = (payload.get("sub") or "").strip().lower()
