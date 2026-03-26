@@ -1,14 +1,22 @@
+import React from "react";
 import "../styles/controlPage.css";
 
-type MoveCmd = "forward" | "backward" | "left" | "right";
+type MoveCmd = "forward" | "backward" | "left" | "right" | "stop";
 
-// TODO: replace these with your actual backend/service calls
+// Point this to your Jetson's local IP address and Flask port
+const JETSON_API_URL = "http://<YOUR_JETSON_IP>:5001/move"; 
+
 function sendMove(cmd: MoveCmd) {
-  console.log("MOVE:", cmd);
-}
-
-function stopAll() {
-  console.log("STOP ALL");
+  fetch(JETSON_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ cmd }),
+  })
+    .then((res) => res.json())
+    .then((data) => console.log("Jetson Response:", data))
+    .catch((err) => console.error("Failed to send command to Jetson:", err));
 }
 
 export default function ControlPage() {
@@ -17,14 +25,14 @@ export default function ControlPage() {
   };
 
   const onStop = () => {
-    stopAll();
+    sendMove("stop");
   };
 
   return (
     <div className="page">
       <div className="control-header">
         <h1>Robot Control</h1>
-        <p className="control-subtitle">Use the D-pad or WASD. Space = Stop.</p>
+        <p className="control-subtitle">Use the D-pad to command the Jetson.</p>
       </div>
 
       <div className="control-grid">
@@ -54,19 +62,6 @@ export default function ControlPage() {
                 <span>▼</span>
               </button>
             </div>
-          </div>
-
-          <div className="control-hint">Tip: WASD to move, Space to stop.</div>
-        </section>
-
-        <section className="control-card">
-          <h2>Actions</h2>
-          <div className="control-divider" />
-
-          <div className="actions-list">
-            <button className="action-btn" onClick={() => console.log("Mode: Manual")}>Mode: Manual</button>
-            <button className="action-btn" onClick={() => console.log("Mode: Auto")}>Mode: Auto</button>
-            <button className="action-btn" onClick={() => console.log("Reset")}>Reset System</button>
           </div>
         </section>
       </div>

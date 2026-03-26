@@ -3,74 +3,67 @@
 #include <Adafruit_PWMServoDriver.h>
 #include <Bluepad32.h>
 
-// ---------- I2C / PCA9685 CONFIG ----------
+"""
+Updated with respect to the following article:
+https://forums.developer.nvidia.com/t/seamless-communication-between-jetson-nano-and-esp32-with-microros/308910
+"""
 
+// --- MicroROS Includes ---
+#include <micro_ros_arduino.h>
+#include <stdio.h>
+#include <rcl/rcl.h>
+#include <rcl/error_handling.h>
+#include <rclc/rclc.h>
+#include <rclc/executor.h>
+#include <geometry_msgs/msg/twist.h>
+
+#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){error_loop();}}
+#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){}}
+
+// ---------- I2C / PCA9685 CONFIG ----------
 #define I2C_SDA 4
 #define I2C_SCL 5
-
 #define PCA9685_ADDR 0x40
 Adafruit_PWMServoDriver pca9685 = Adafruit_PWMServoDriver(PCA9685_ADDR);
 
 #define SERVOMIN  80
 #define SERVOMAX  600
+#define SERVO0_CH 0    
+#define SERVO1_CH 1    
+#define SERVO2_CH 2    // Pan / Tracking
 
-// PCA9685 channels for servos
-#define SERVO0_CH 0    // "servo 1" 
-#define SERVO1_CH 1    // "servo 2"
-#define SERVO2_CH 2    // "servo 3" (Pan / Tracking)
-
-// ---------- SERVO / PRESET CONFIG ----------
-
-// Homes
-const int HOME0_ANGLE = 134;  // servo 1 home
-const int HOME1_ANGLE = 70;   // servo 2 home
-const int HOME2_ANGLE = 90;   // servo 3 home (adjust as needed)
+// ---------- SERVO CONFIG ----------
+const int HOME0_ANGLE = 134; 
+const int HOME1_ANGLE = 70;  
+const int HOME2_ANGLE = 90;  
 
 int servo0Angle = HOME0_ANGLE;
 int servo1Angle = HOME1_ANGLE;
 int servo2Angle = HOME2_ANGLE;
 
-const int JOYSTICK_DEADZONE = 32;
+// ---------- ROS 2 CONTROL STATE ----------
+enum RosMoveState { ROS_STOP, ROS_LEFT, ROS_RIGHT };
+RosMoveState currentRosMove = ROS_STOP;
+uint32_t lastRosMoveMs = 0;
+const int ROS_STEP_DEG = 1;   
+const int ROS_STEP_MS = 20;   
 
-// Joystick ranges around home
-const int MAX_DELTA0 = 60;
-const int MAX_DELTA1 = 60;
-const int MAX_DELTA2 = 60;
-
-// Preset offsets
-const int PRESET_OFFSET01_DEG   = 30;  // ±30° for servos 1 & 2 during preset
-const int PRESET_OFFSET2_DEG    = 30;  // +30° CW for servo 3
-const int PRESET_STEP_DEG       = 2;
-const uint16_t PRESET_STEP_MS   = 15;
-
-// Preset state machine
-enum PresetPhase {
-  PRESET_IDLE = 0,
-  PRESET_MOVING_OUT_2,
-  PRESET_MOVING_OUT_01,
-  PRESET_MOVING_BACK_2,
-  PRESET_MOVING_BACK_01
-};
-
-bool         presetActive      = false;
-PresetPhase  presetPhase       = PRESET_IDLE;
-int          presetTargetOut0  = HOME0_ANGLE;
-int          presetTargetOut1  = HOME1_ANGLE;
-int          presetTargetOut2  = HOME2_ANGLE;
-uint32_t     lastPresetStepMs  = 0;
-
-// ---------- SERIAL CONTROL STATE (NEW FOR JETSON) ----------
-enum SerialMoveState { SERIAL_STOP, SERIAL_LEFT, SERIAL_RIGHT };
-SerialMoveState currentSerialMove = SERIAL_STOP;
-uint32_t lastSerialMoveMs = 0;
-const int SERIAL_STEP_DEG = 1;   // How many degrees to move per step
-const int SERIAL_STEP_MS = 20;   // Speed of the rotation (lower = faster)
+// ---------- MICROROS GLOBALS ----------
+rcl_subscription_t subscriber;
+geometry_msgs__msg__Twist msg;
+rclc_executor_t executor;
+rcl_allocator_t allocator;
+rclc_support_t support;
+rcl_node_t node;
 
 // ---------- BLUEPAD32 STATE ----------
-
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
+bool presetActive = false;
+// ... (Keep your existing preset configuration variables here) ...
 
-// ---------- HELPERS ----------
+void error_loop(){
+  while(1){ delay(100); }
+}
 
 void setServoAngle(uint8_t channel, int angleDeg) {
   angleDeg = constrain(angleDeg, 0, 180);
@@ -78,295 +71,111 @@ void setServoAngle(uint8_t channel, int angleDeg) {
   pca9685.setPWM(channel, 0, pulse);
 }
 
-int applyDeadzoneInt(int v, int dz) {
-  if (abs(v) < dz) return 0;
-  return v;
-}
+// ---------- MICROROS CALLBACK ----------
+// Update your enum to include forward and backward
+enum RosMoveState { ROS_STOP, ROS_LEFT, ROS_RIGHT, ROS_FORWARD, ROS_BACKWARD };
+RosMoveState currentRosMove = ROS_STOP;
 
-// ---------- SERIAL PROCESSING (NEW FOR JETSON) ----------
-
-void processSerialCommands() {
-  // Check if the Jetson Orin Nano has sent any data over USB
-  while (Serial.available() > 0) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim(); // Remove any extra \r or spaces
-    
-    if (cmd == "MOVE:TURN_LEFT") {
-      currentSerialMove = SERIAL_LEFT;
-    } 
-    else if (cmd == "MOVE:TURN_RIGHT") {
-      currentSerialMove = SERIAL_RIGHT;
-    } 
-    else if (cmd == "MOVE:STOP") {
-      currentSerialMove = SERIAL_STOP;
-    }
-  }
-}
-
-void updateSerialMotion() {
-  // If a gamepad preset is running, let it finish first
-  if (presetActive) return; 
-  // If we are centered/stopped, do nothing
-  if (currentSerialMove == SERIAL_STOP) return;
-
-  uint32_t now = millis();
-  if (now - lastSerialMoveMs < SERIAL_STEP_MS) return;
-  lastSerialMoveMs = now;
-
-  // Adjust Servo 3 (Pan) based on the Jetson's command
-  if (currentSerialMove == SERIAL_LEFT) {
-    servo2Angle -= SERIAL_STEP_DEG; // Decrease angle
-  } 
-  else if (currentSerialMove == SERIAL_RIGHT) {
-    servo2Angle += SERIAL_STEP_DEG; // Increase angle
-  }
-
-  // Ensure we don't break the servo
-  servo2Angle = constrain(servo2Angle, 0, 180);
+void twist_callback(const void * msgin) {
+  const geometry_msgs__msg__Twist * twist_msg = (const geometry_msgs__msg__Twist *)msgin;
   
-  // Apply the movement
-  setServoAngle(SERVO2_CH, servo2Angle);
-}
-
-// ---------- PRESET MOTION LOGIC ----------
-
-void startPresetForDpad(int dpadValue) {
-  if (presetActive) return;
-
-  int offset0 = 0;
-  int offset1 = 0;
-
-  if (dpadValue == 1) { // Up
-    offset0 = +PRESET_OFFSET01_DEG;
-    offset1 = -PRESET_OFFSET01_DEG;
-  } else if (dpadValue == 2) { // Right
-    offset0 = +PRESET_OFFSET01_DEG;
-    offset1 = +PRESET_OFFSET01_DEG;
-  } else if (dpadValue == 8) { // Left
-    offset0 = -PRESET_OFFSET01_DEG;
-    offset1 = -PRESET_OFFSET01_DEG;
+  // Prioritize turning, then forward/backward
+  if (twist_msg->angular.z > 0.1) {
+    currentRosMove = ROS_LEFT;
+  } else if (twist_msg->angular.z < -0.1) {
+    currentRosMove = ROS_RIGHT;
+  } else if (twist_msg->linear.x > 0.1) {
+    currentRosMove = ROS_FORWARD;
+  } else if (twist_msg->linear.x < -0.1) {
+    currentRosMove = ROS_BACKWARD;
   } else {
-    return;
+    currentRosMove = ROS_STOP;
   }
-
-  servo0Angle = HOME0_ANGLE;
-  servo1Angle = HOME1_ANGLE;
-  servo2Angle = HOME2_ANGLE;
-  setServoAngle(SERVO0_CH, servo0Angle);
-  setServoAngle(SERVO1_CH, servo1Angle);
-  setServoAngle(SERVO2_CH, servo2Angle);
-
-  presetTargetOut0 = constrain(HOME0_ANGLE + offset0, 0, 180);
-  presetTargetOut1 = constrain(HOME1_ANGLE + offset1, 0, 180);
-  presetTargetOut2 = constrain(HOME2_ANGLE + PRESET_OFFSET2_DEG, 0, 180);
-
-  presetPhase      = PRESET_MOVING_OUT_2;
-  presetActive     = true;
-  lastPresetStepMs = millis();
 }
 
-void updatePresetMotion() {
-  if (!presetActive) return;
+void updateRosMotion() {
+  if (presetActive) return; 
+  if (currentRosMove == ROS_STOP) return;
 
   uint32_t now = millis();
-  if (now - lastPresetStepMs < PRESET_STEP_MS) return;
-  lastPresetStepMs = now;
+  if (now - lastRosMoveMs < ROS_STEP_MS) return;
+  lastRosMoveMs = now;
 
-  switch (presetPhase) {
-
-    case PRESET_MOVING_OUT_2:
-      if (servo2Angle < presetTargetOut2)      servo2Angle += PRESET_STEP_DEG;
-      else if (servo2Angle > presetTargetOut2) servo2Angle -= PRESET_STEP_DEG;
-
-      servo2Angle = constrain(servo2Angle, 0, 180);
-      setServoAngle(SERVO2_CH, servo2Angle);
-
-      if (abs(servo2Angle - presetTargetOut2) <= PRESET_STEP_DEG) {
-        presetPhase = PRESET_MOVING_OUT_01;
-      }
-      break;
-
-    case PRESET_MOVING_OUT_01:
-      if (servo0Angle < presetTargetOut0)      servo0Angle += PRESET_STEP_DEG;
-      else if (servo0Angle > presetTargetOut0) servo0Angle -= PRESET_STEP_DEG;
-
-      if (servo1Angle < presetTargetOut1)      servo1Angle += PRESET_STEP_DEG;
-      else if (servo1Angle > presetTargetOut1) servo1Angle -= PRESET_STEP_DEG;
-
-      servo0Angle = constrain(servo0Angle, 0, 180);
-      servo1Angle = constrain(servo1Angle, 0, 180);
-
-      setServoAngle(SERVO0_CH, servo0Angle);
-      setServoAngle(SERVO1_CH, servo1Angle);
-
-      if (abs(servo0Angle - presetTargetOut0) <= PRESET_STEP_DEG &&
-          abs(servo1Angle - presetTargetOut1) <= PRESET_STEP_DEG) {
-        presetPhase = PRESET_MOVING_BACK_2;
-      }
-      break;
-
-    case PRESET_MOVING_BACK_2:
-      if (servo2Angle < HOME2_ANGLE)      servo2Angle += PRESET_STEP_DEG;
-      else if (servo2Angle > HOME2_ANGLE) servo2Angle -= PRESET_STEP_DEG;
-
-      servo2Angle = constrain(servo2Angle, 0, 180);
-      setServoAngle(SERVO2_CH, servo2Angle);
-
-      if (abs(servo2Angle - HOME2_ANGLE) <= PRESET_STEP_DEG) {
-        presetPhase = PRESET_MOVING_BACK_01;
-      }
-      break;
-
-    case PRESET_MOVING_BACK_01:
-      if (servo0Angle < HOME0_ANGLE)      servo0Angle += PRESET_STEP_DEG;
-      else if (servo0Angle > HOME0_ANGLE) servo0Angle -= PRESET_STEP_DEG;
-
-      if (servo1Angle < HOME1_ANGLE)      servo1Angle += PRESET_STEP_DEG;
-      else if (servo1Angle > HOME1_ANGLE) servo1Angle -= PRESET_STEP_DEG;
-
-      servo0Angle = constrain(servo0Angle, 0, 180);
-      servo1Angle = constrain(servo1Angle, 0, 180);
-
-      setServoAngle(SERVO0_CH, servo0Angle);
-      setServoAngle(SERVO1_CH, servo1Angle);
-
-      if (abs(servo0Angle - HOME0_ANGLE) <= PRESET_STEP_DEG &&
-          abs(servo1Angle - HOME1_ANGLE) <= PRESET_STEP_DEG) {
-        presetActive = false;
-        presetPhase  = PRESET_IDLE;
-      }
-      break;
-
-    case PRESET_IDLE:
-    default:
-      break;
+  // Servo 2 (Channel 2) handles Left/Right Panning
+  if (currentRosMove == ROS_LEFT) {
+    servo2Angle -= ROS_STEP_DEG; 
+  } 
+  else if (currentRosMove == ROS_RIGHT) {
+    servo2Angle += ROS_STEP_DEG; 
   }
-}
-
-// ---------- BLUEPAD32 CALLBACKS ----------
-
-void onConnectedController(ControllerPtr ctl) {
-  for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
-    if (myControllers[i] == nullptr) {
-      ControllerProperties properties = ctl->getProperties();
-      myControllers[i] = ctl;
-      return;
-    }
+  // Servos 0 & 1 (Channels 0 & 1) handle Forward/Backward motion
+  else if (currentRosMove == ROS_FORWARD) {
+    servo0Angle += ROS_STEP_DEG;
+    servo1Angle -= ROS_STEP_DEG; // Assuming inverse mounting, adjust if needed
   }
-}
-
-void onDisconnectedController(ControllerPtr ctl) {
-  for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
-    if (myControllers[i] == ctl) {
-      myControllers[i] = nullptr;
-      return;
-    }
-  }
-}
-
-// ---------- GAMEPAD PROCESSING ----------
-
-void processGamepad(ControllerPtr ctl) {
-  int dpad = ctl->dpad();
-
-  // Trigger preset on D-pad
-  if (!presetActive && dpad != 0) {
-    startPresetForDpad(dpad);
+  else if (currentRosMove == ROS_BACKWARD) {
+    servo0Angle -= ROS_STEP_DEG;
+    servo1Angle += ROS_STEP_DEG;
   }
 
-  // During presets, ignore joystick control
-  if (presetActive) {
-    return;
-  }
-
-  int ly = ctl->axisY();
-  int ry = ctl->axisRY();
-  int rx = ctl->axisRX();
-
-  ly = applyDeadzoneInt(ly, JOYSTICK_DEADZONE);
-  ry = applyDeadzoneInt(ry, JOYSTICK_DEADZONE);
-  rx = applyDeadzoneInt(rx, JOYSTICK_DEADZONE);
-
-  if (ly != 0) {
-    int delta0 = map(ly, -512, 512, -MAX_DELTA0, MAX_DELTA0);
-    servo0Angle = HOME0_ANGLE + delta0;
-  }
-
-  if (ry != 0) {
-    int delta1 = map(ry, -512, 512, -MAX_DELTA1, MAX_DELTA1);
-    servo1Angle = HOME1_ANGLE + delta1;
-  }
-
-  if (rx != 0) {
-    int delta2 = map(rx, -512, 512, -MAX_DELTA2, MAX_DELTA2);
-    servo2Angle = HOME2_ANGLE + delta2;
-  }
-
+  // Constrain to prevent hardware damage
   servo0Angle = constrain(servo0Angle, 0, 180);
   servo1Angle = constrain(servo1Angle, 0, 180);
   servo2Angle = constrain(servo2Angle, 0, 180);
-
+  
+  // Apply movements
   setServoAngle(SERVO0_CH, servo0Angle);
   setServoAngle(SERVO1_CH, servo1Angle);
   setServoAngle(SERVO2_CH, servo2Angle);
 }
 
-void processControllers() {
-  for (auto ctl : myControllers) {
-    if (!ctl) continue;
-    if (!ctl->isConnected()) continue;
-    if (!ctl->hasData()) continue;
-
-    if (ctl->isGamepad()) {
-      processGamepad(ctl);
-    }
-  }
-}
-
-// ---------- SETUP & LOOP ----------
+// ... (Keep your existing processGamepad(), updatePresetMotion(), and Bluepad Callbacks) ...
 
 void setup() {
-  Serial.begin(115200);
-  delay(1000);
+  // 1. Init Serial for MicroROS (DO NOT use Serial.begin manually here)
+  set_microros_transports();
 
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
-
-  if (!pca9685.begin()) {
-    while (1) delay(1000);
-  }
+  pca9685.begin();
   pca9685.setPWMFreq(50);
-  delay(10);
-
-  // Initialize to home positions
+  
   setServoAngle(SERVO0_CH, servo0Angle);
   setServoAngle(SERVO1_CH, servo1Angle);
   setServoAngle(SERVO2_CH, servo2Angle);
 
+  // 2. Init Bluepad32
   BP32.setup(&onConnectedController, &onDisconnectedController);
   BP32.forgetBluetoothKeys();
   BP32.enableVirtualDevice(false);
 
-  for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
-    myControllers[i] = nullptr;
-  }
+  // 3. Init MicroROS
+  delay(2000);
+  allocator = rcl_get_default_allocator();
+  RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
+  RCCHECK(rclc_node_init_default(&node, "esp32_aura_base", "", &support));
+
+  // Subscribe to /cmd_vel
+  RCCHECK(rclc_subscription_init_default(
+    &subscriber, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+    "cmd_vel"));
+
+  RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
+  RCCHECK(rclc_executor_add_subscription(&executor, &subscriber, &msg, &twist_callback, ON_NEW_DATA));
 }
 
 void loop() {
-  // 1. Check for Bluetooth Gamepad updates
+  // 1. Process MicroROS callbacks
+  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(10)));
+
+  // 2. Update Bluetooth
   bool dataUpdated = BP32.update();
-  if (dataUpdated) {
-    processControllers();
-  }
+  // if (dataUpdated) { processControllers(); }
 
-  // 2. Check for Jetson USB Serial updates
-  processSerialCommands();
+  // 3. Move hardware
+  // updatePresetMotion();
+  updateRosMotion();
 
-  // 3. Execute any active animations/movements
-  updatePresetMotion();
-  updateSerialMotion();
-
-  if (!dataUpdated) {
-    vTaskDelay(1);
-  }
+  if (!dataUpdated) { vTaskDelay(1); }
 }
