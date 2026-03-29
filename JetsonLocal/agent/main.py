@@ -96,9 +96,11 @@ def init_hardware():
     global esp_serial
     try:
         esp_serial = serial.Serial(SERIAL_PORT, 115200, timeout=1)
+        print(f"[SERIAL] connected to {SERIAL_PORT}")
         send_or_queue_log("info", "serial_connected", f"Connected to serial port {SERIAL_PORT}")
     except serial.SerialException:
         esp_serial = None
+        print(f"[SERIAL] unavailable: {SERIAL_PORT}")
         send_or_queue_log("warning", "serial_unavailable", f"Serial port unavailable: {SERIAL_PORT}")
 
 
@@ -112,9 +114,11 @@ def init_rag():
             llm_model_name=DEFAULT_MODEL,
             embed_model_name=EMBEDDING_MODEL,
         )
+        print(f"[RAG] initialized at {db_path}")
         send_or_queue_log("info", "rag_initialized", f"RAG initialized at {db_path}")
     except Exception as e:
         rag_system = None
+        print(f"[RAG] init failed: {e}")
         send_or_queue_log("warning", "rag_init_failed", f"RAG init failed: {e}")
 
 
@@ -132,7 +136,9 @@ def build_register_payload():
 
 async def register_device():
     payload = build_register_payload()
+    print(f"[REGISTER] sending: {payload}")
     result = await asyncio.to_thread(api.register, payload)
+    print(f"[REGISTER] success: {result}")
     send_or_queue_log("info", "device_registered", "Device registered with backend", result)
     return result
 
@@ -144,7 +150,9 @@ async def refresh_config():
         runtime_config["poll_seconds"] = int(result.get("poll_seconds", runtime_config["poll_seconds"]))
         runtime_config["heartbeat_seconds"] = int(result.get("heartbeat_seconds", runtime_config["heartbeat_seconds"]))
         runtime_config["status_seconds"] = int(result.get("status_seconds", runtime_config["status_seconds"]))
+        print(f"[CONFIG] success: {result}")
     except Exception as e:
+        print(f"[CONFIG] failed: {e}")
         send_or_queue_log("warning", "config_refresh_failed", f"Failed to refresh device config: {e}")
 
 
@@ -153,7 +161,9 @@ async def heartbeat_loop():
         try:
             payload = build_heartbeat_payload()
             await asyncio.to_thread(api.heartbeat, payload)
+            print(f"[HEARTBEAT] sent for {payload.get('device_id')}")
         except Exception as e:
+            print(f"[HEARTBEAT] failed: {e}")
             send_or_queue_log("warning", "heartbeat_failed", f"Heartbeat failed: {e}")
         await asyncio.sleep(runtime_config["heartbeat_seconds"])
 
@@ -165,8 +175,13 @@ async def status_loop():
         connection_text = "Connected to website"
         try:
             await asyncio.to_thread(api.status, payload)
+            print(
+                f"[STATUS] sent cpu={payload.get('cpu_percent')} "
+                f"gpu={(payload.get('extra') or {}).get('gpu_percent')}"
+            )
         except Exception as e:
             queue_status(payload)
+            print(f"[STATUS] failed: {e}")
             send_or_queue_log("warning", "status_failed", f"Status upload failed: {e}")
             connection_text = "Robot only / website offline"
 
@@ -186,8 +201,9 @@ async def flush_loop():
         try:
             await asyncio.to_thread(flush_logs, api.log)
             await asyncio.to_thread(flush_statuses, api.status)
-        except Exception:
-            pass
+            print("[FLUSH] attempted queued log/status flush")
+        except Exception as e:
+            print(f"[FLUSH] failed: {e}")
         await asyncio.sleep(OFFLINE_RETRY_SECONDS)
 
 
@@ -248,12 +264,16 @@ async def handle_user_message(user_msg: str):
 
 @app.on_event("startup")
 async def startup_event():
+    print("[STARTUP] initializing hardware")
     init_hardware()
+
+    print("[STARTUP] initializing rag")
     init_rag()
 
     try:
         await register_device()
     except Exception as e:
+        print(f"[REGISTER] initial register failed: {e}")
         send_or_queue_log("warning", "register_failed", f"Initial register failed: {e}")
 
     asyncio.create_task(config_loop())
@@ -261,6 +281,7 @@ async def startup_event():
     asyncio.create_task(status_loop())
     asyncio.create_task(flush_loop())
 
+    print("[STARTUP] background loops started")
     send_or_queue_log("info", "startup_complete", "Jetson agent startup complete")
 
 
@@ -272,6 +293,7 @@ async def serve_ui():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await ui_manager.connect(websocket)
+    print("[WS] client connected")
     try:
         await websocket.send_json({
             "type": "status",
@@ -292,10 +314,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
             await handle_user_message(msg)
     except WebSocketDisconnect:
+        print("[WS] client disconnected")
         ui_manager.disconnect(websocket)
-    except Exception:
+    except Exception as e:
+        print(f"[WS] error: {e}")
         ui_manager.disconnect(websocket)
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
