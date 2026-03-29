@@ -41,7 +41,7 @@ type AdminListResponse = {
   items: DeviceRecord[];
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const API_BASE = "https://aura-backend-fmfyemepbybgebcs.eastus-01.azurewebsites.net";
 const DEVICE_ID = "jetson-001";
 
 function dotColor(status: HealthStatus) {
