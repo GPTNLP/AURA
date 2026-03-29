@@ -1,5 +1,5 @@
 import requests
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from config import API_BASE_URL, DEVICE_SHARED_SECRET
 
@@ -70,6 +70,26 @@ class ApiClient:
             self._url("/device/config"),
             params={"device_id": device_id},
             headers={"X-Device-Secret": DEVICE_SHARED_SECRET},
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def get_next_command(self, device_id: str) -> Dict[str, Any]:
+        r = requests.get(
+            self._url("/device/command/next"),
+            params={"device_id": device_id},
+            headers={"X-Device-Secret": DEVICE_SHARED_SECRET},
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def ack_command(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        r = requests.post(
+            self._url("/device/command/ack"),
+            json=payload,
+            headers=self._headers(),
             timeout=self.timeout,
         )
         r.raise_for_status()

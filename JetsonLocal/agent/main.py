@@ -213,6 +213,69 @@ async def config_loop():
         await asyncio.sleep(CONFIG_REFRESH_SECONDS)
 
 
+async def command_loop():
+    while True:
+        try:
+            result = await asyncio.to_thread(api.get_next_command, DEVICE_ID)
+            command = result.get("command")
+
+            if command:
+                command_id = command.get("id")
+                cmd = (command.get("command") or "").strip().lower()
+                print(f"[COMMAND] received: {cmd}")
+
+                if cmd in {"forward", "backward", "left", "right", "stop"}:
+                    if esp_serial:
+                        try:
+                            serial_msg = f"MOVE:{cmd}\n"
+                            esp_serial.write(serial_msg.encode("utf-8"))
+                            print(f"[COMMAND] sent to ESP: {serial_msg.strip()}")
+
+                            await asyncio.to_thread(api.ack_command, {
+                                "command_id": command_id,
+                                "device_id": DEVICE_ID,
+                                "status": "completed",
+                                "note": f"Sent to ESP as {serial_msg.strip()}",
+                            })
+
+                            send_or_queue_log(
+                                "info",
+                                "device_command_executed",
+                                f"Executed command: {cmd}",
+                                {"command_id": command_id, "serial_message": serial_msg.strip()},
+                            )
+                        except Exception as e:
+                            print(f"[COMMAND] serial send failed: {e}")
+                            await asyncio.to_thread(api.ack_command, {
+                                "command_id": command_id,
+                                "device_id": DEVICE_ID,
+                                "status": "failed",
+                                "note": f"Serial send failed: {e}",
+                            })
+                    else:
+                        print("[COMMAND] ESP serial not connected")
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "failed",
+                            "note": "ESP serial is not connected",
+                        })
+                else:
+                    print(f"[COMMAND] invalid command ignored: {cmd}")
+                    if command_id:
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "failed",
+                            "note": f"Invalid command: {cmd}",
+                        })
+
+        except Exception as e:
+            print(f"[COMMAND] poll failed: {e}")
+
+        await asyncio.sleep(runtime_config["poll_seconds"])
+
+
 async def parse_intent(user_msg: str):
     client = OllamaClient("http://127.0.0.1:11434", EMBEDDING_MODEL, DEFAULT_MODEL)
     system = "Classify user input as 'MOVEMENT' or 'QUESTION'. Reply with one word."
@@ -280,6 +343,7 @@ async def startup_event():
     asyncio.create_task(heartbeat_loop())
     asyncio.create_task(status_loop())
     asyncio.create_task(flush_loop())
+    asyncio.create_task(command_loop())
 
     print("[STARTUP] background loops started")
     send_or_queue_log("info", "startup_complete", "Jetson agent startup complete")

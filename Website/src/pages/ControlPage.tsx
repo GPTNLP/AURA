@@ -1,22 +1,34 @@
-import React from "react";
 import "../styles/controlPage.css";
 
 type MoveCmd = "forward" | "backward" | "left" | "right" | "stop";
 
-// Point this to your Jetson's local IP address and Flask port
-const JETSON_API_URL = "http://<YOUR_JETSON_IP>:5001/move"; 
+const BACKEND_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+const DEVICE_ID = "jetson-001";
 
-function sendMove(cmd: MoveCmd) {
-  fetch(JETSON_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ cmd }),
-  })
-    .then((res) => res.json())
-    .then((data) => console.log("Jetson Response:", data))
-    .catch((err) => console.error("Failed to send command to Jetson:", err));
+async function sendMove(cmd: MoveCmd) {
+  try {
+    const res = await fetch(`${BACKEND_BASE_URL}/device/admin/command`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        device_id: DEVICE_ID,
+        command: cmd,
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Backend error ${res.status}: ${text}`);
+    }
+
+    const data = await res.json();
+    console.log("Backend Response:", data);
+  } catch (err) {
+    console.error("Failed to send command to backend:", err);
+  }
 }
 
 export default function ControlPage() {
@@ -32,7 +44,7 @@ export default function ControlPage() {
     <div className="page">
       <div className="control-header">
         <h1>Robot Control</h1>
-        <p className="control-subtitle">Use the D-pad to command the Jetson.</p>
+        <p className="control-subtitle">Use the D-pad to command the robot.</p>
       </div>
 
       <div className="control-grid">
