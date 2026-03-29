@@ -129,3 +129,14 @@
   font-size: 12px;
   color: var(--muted-text);
 }
+
+.dash-error {
+  max-width: 1200px;
+  margin: 0 auto 18px auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff4f4;
+  border: 1px solid #f0caca;
+  color: #8a1f1f;
+  font-size: 14px;
+}

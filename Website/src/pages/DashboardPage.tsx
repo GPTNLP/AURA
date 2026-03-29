@@ -1,28 +1,127 @@
 import { useEffect, useMemo, useState } from "react";
 import "../styles/dashboard.css";
 import robotImage from "../assets/robot.png";
-import { loadDashboardMock, mutateDashboard, type DashboardData } from "../services/mockDashboard";
 
-function dotColor(status: "OK" | "WARN" | "BAD") {
+type HealthStatus = "OK" | "WARN" | "BAD";
+
+type DeviceRecord = {
+  device_id: string;
+  device_name?: string;
+  online?: boolean;
+  last_seen_at?: number;
+  status?: {
+    battery_percent?: number | null;
+    battery_voltage?: number | null;
+    charging?: boolean | null;
+    cpu_percent?: number | null;
+    ram_percent?: number | null;
+    disk_percent?: number | null;
+    temperature_c?: number | null;
+    camera_ready?: boolean | null;
+    mic_ready?: boolean | null;
+    speaker_ready?: boolean | null;
+    ollama_ready?: boolean | null;
+    vector_db_ready?: boolean | null;
+    current_mode?: string | null;
+    current_task?: string | null;
+    updated_at?: number | null;
+    extra?: {
+      hostname?: string;
+      local_ip?: string;
+      uptime_seconds?: number;
+      gpu_percent?: number;
+      db_name?: string;
+    };
+  };
+};
+
+type AdminListResponse = {
+  ok: boolean;
+  count: number;
+  items: DeviceRecord[];
+};
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "";
+const DEVICE_ID = "jetson-001";
+
+function dotColor(status: HealthStatus) {
   if (status === "OK") return "var(--status-good)";
   if (status === "WARN") return "var(--status-warn)";
   return "var(--status-bad)";
 }
 
+function healthFromBool(value?: boolean | null): HealthStatus {
+  if (value === true) return "OK";
+  if (value === false) return "BAD";
+  return "WARN";
+}
+
+function thermalStatus(tempC?: number | null): HealthStatus {
+  if (tempC == null) return "WARN";
+  if (tempC < 70) return "OK";
+  if (tempC < 82) return "WARN";
+  return "BAD";
+}
+
+function formatUptime(sec?: number) {
+  if (sec == null) return "—";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${h}h ${m}m ${s}s`;
+}
+
+function formatUpdated(unixSeconds?: number) {
+  if (!unixSeconds) return "";
+  return new Date(unixSeconds * 1000).toLocaleTimeString();
+}
+
+function fmt(value?: number | null, suffix = "", digits = 1) {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${value.toFixed(digits)}${suffix}`;
+}
+
 export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [device, setDevice] = useState<DeviceRecord | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let alive = true;
 
-    (async () => {
-      const initial = await loadDashboardMock();
-      if (alive) setData(initial);
-    })();
+    async function load() {
+      try {
+        const res = await fetch(`${API_BASE}/device/admin/list`, {
+          method: "GET",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
 
-    const id = setInterval(() => {
-      setData((prev) => (prev ? mutateDashboard(prev) : prev));
-    }, 1000);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`${res.status} ${text}`);
+        }
+
+        const data: AdminListResponse = await res.json();
+        const found =
+          data.items.find((item) => item.device_id === DEVICE_ID) ??
+          data.items[0] ??
+          null;
+
+        if (alive) {
+          setDevice(found);
+          setError("");
+        }
+      } catch (err) {
+        if (alive) {
+          setError(err instanceof Error ? err.message : "Failed to load dashboard");
+        }
+      }
+    }
+
+    load();
+    const id = setInterval(load, 5000);
 
     return () => {
       alive = false;
@@ -31,10 +130,23 @@ export default function DashboardPage() {
   }, []);
 
   const updatedLabel = useMemo(() => {
-    if (!data) return "";
-    const d = new Date(data.updatedAt);
-    return d.toLocaleTimeString();
-  }, [data?.updatedAt]);
+    if (!device?.last_seen_at) return "";
+    return formatUpdated(device.last_seen_at);
+  }, [device?.last_seen_at]);
+
+  const status = device?.online ? "ONLINE" : "OFFLINE";
+  const s = device?.status;
+  const extra = s?.extra;
+
+  const motorsHealth: HealthStatus = "OK";
+  const sensorsHealth: HealthStatus =
+    healthFromBool(s?.camera_ready) === "BAD" ||
+    healthFromBool(s?.mic_ready) === "BAD" ||
+    healthFromBool(s?.speaker_ready) === "BAD"
+      ? "BAD"
+      : "OK";
+
+  const thermalsHealth = thermalStatus(s?.temperature_c);
 
   return (
     <div className="dashboard-page">
@@ -42,28 +154,33 @@ export default function DashboardPage() {
         <div className="aura-panel">
           <img src={robotImage} alt="AURA" className="aura-img" />
           <div className="aura-text">
-            <h1 className="aura-title">{"AURA"}</h1>
+            <h1 className="aura-title">{device?.device_name || "AURA"}</h1>
             <div className="aura-sub">
-              Status: <b>{data?.robot.status ?? "—"}</b>
+              Status: <b>{status}</b>
               {updatedLabel ? <> • Updated {updatedLabel}</> : null}
             </div>
           </div>
         </div>
       </div>
 
+      {error ? <div className="dash-error">Dashboard load failed: {error}</div> : null}
+
       <section className="dashboard-section">
         <div className="dash-title-row">
           <h2 className="dash-title">Filometrics</h2>
-          <div className="dash-subtitle">Live mock values (updates every second)</div>
+          <div className="dash-subtitle">Live Jetson values</div>
         </div>
 
         <div className="filo-grid">
-          <FiloCard label="Battery" value={data ? `${data.system.batteryPct.toFixed(1)}%` : "—"} sub="Robot power" />
-          <FiloCard label="CPU Temp" value={data ? `${data.system.cpuTempC.toFixed(1)}°C` : "—"} sub="Jetson SoC" />
-          <FiloCard label="RAM Usage" value={data ? `${data.system.ramPct.toFixed(1)}%` : "—"} sub="Memory load" />
-          <FiloCard label="Wi-Fi" value={data ? `${data.system.wifiDbm.toFixed(0)} dBm` : "—"} sub="Signal strength" />
-          <FiloCard label="Weight" value={data ? `${data.system.weightLb.toFixed(2)} lb` : "—"} sub="Payload sensor" />
-          <FiloCard label="Uptime" value={data ? formatUptime(data.robot.uptimeSec) : "—"} sub="Since boot" />
+          <FiloCard label="Battery" value={fmt(s?.battery_percent, "%", 1)} sub="Robot power" />
+          <FiloCard label="CPU Temp" value={fmt(s?.temperature_c, "°C", 1)} sub="Jetson SoC" />
+          <FiloCard label="RAM Usage" value={fmt(s?.ram_percent, "%", 1)} sub="Memory load" />
+          <FiloCard label="CPU Usage" value={fmt(s?.cpu_percent, "%", 1)} sub="Processor load" />
+          <FiloCard label="GPU Usage" value={fmt(extra?.gpu_percent, "%", 1)} sub="GPU load" />
+          <FiloCard label="Uptime" value={formatUptime(extra?.uptime_seconds)} sub="Since boot" />
+          <FiloCard label="Battery Voltage" value={fmt(s?.battery_voltage, " V", 2)} sub="Pack voltage" />
+          <FiloCard label="Charging" value={s?.charging == null ? "—" : s.charging ? "Yes" : "No"} sub="Charge state" />
+          <FiloCard label="IP Address" value={extra?.local_ip || "—"} sub="Jetson network" />
         </div>
       </section>
 
@@ -74,9 +191,9 @@ export default function DashboardPage() {
         </div>
 
         <div className="filo-grid">
-          <HealthCard label="Motors" status={data?.health.motors} />
-          <HealthCard label="Sensors" status={data?.health.sensors} />
-          <HealthCard label="Thermals" status={data?.health.thermals} />
+          <HealthCard label="Motors" status={motorsHealth} />
+          <HealthCard label="Sensors" status={sensorsHealth} />
+          <HealthCard label="Thermals" status={thermalsHealth} />
         </div>
       </section>
     </div>
@@ -96,8 +213,8 @@ function FiloCard({ label, value, sub }: { label: string; value: string; sub: st
   );
 }
 
-function HealthCard({ label, status }: { label: string; status?: "OK" | "WARN" | "BAD" }) {
-  const s = status ?? "OK";
+function HealthCard({ label, status }: { label: string; status?: HealthStatus }) {
+  const s = status ?? "WARN";
   return (
     <div className="filo-item">
       <div className="filo-top">
@@ -108,11 +225,4 @@ function HealthCard({ label, status }: { label: string; status?: "OK" | "WARN" |
       <div className="filo-sub">Overall condition</div>
     </div>
   );
-}
-
-function formatUptime(sec: number) {
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  return `${h}h ${m}m ${s}s`;
 }

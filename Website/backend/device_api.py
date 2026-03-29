@@ -317,7 +317,7 @@ def device_config(request: Request, device_id: str):
         "heartbeat_seconds": DEVICE_DEFAULT_HEARTBEAT_SECONDS,
         "status_seconds": DEVICE_DEFAULT_STATUS_SECONDS,
         "camera_mode": "reserved",
-        "commands_enabled": False,
+        "commands_enabled": True,
         "ollama_enabled": False,
         "vector_sync_enabled": False,
     }
