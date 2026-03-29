@@ -14,3 +14,9 @@ Thumbs.db
 build/
 dist/
 *.egg-info/
+
+
+# env files
+.env
+.env.*
+.env.example
