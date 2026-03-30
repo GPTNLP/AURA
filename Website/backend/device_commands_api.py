@@ -1,4 +1,3 @@
-# backend/device_commands_api.py
 from __future__ import annotations
 
 import json
@@ -14,7 +13,21 @@ from security import require_role
 
 router = APIRouter(tags=["device_commands"])
 
-ALLOWED_COMMANDS = {"forward", "backward", "left", "right", "stop", "build_rag", "chat_prompt", "sync_vectors", "pitch", "yaw"}
+ALLOWED_COMMANDS = {
+    "forward",
+    "backward",
+    "left",
+    "right",
+    "stop",
+    "build_rag",
+    "chat_prompt",
+    "sync_vectors",
+    "pitch",
+    "yaw",
+}
+
+# movement-style commands should not stack up in a queue
+MOVEMENT_COMMANDS = {"forward", "backward", "left", "right", "stop"}
 
 STORAGE_DIR = Path(os.getenv("LOG_DIR", Path(__file__).resolve().parent / "storage"))
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
@@ -50,6 +63,10 @@ def _require_device_secret(x_device_secret: str | None) -> None:
         raise HTTPException(status_code=401, detail="Invalid device secret")
 
 
+def _is_active_status(status: str | None) -> bool:
+    return status in {"pending", "delivered"}
+
+
 class DeviceCommandIn(BaseModel):
     device_id: str
     command: str
@@ -67,20 +84,40 @@ class DeviceCommandAckIn(BaseModel):
 @router.post("/device/admin/command")
 def queue_device_command(payload: DeviceCommandIn, request: Request):
     _require_admin(request)
+
     if payload.command not in ALLOWED_COMMANDS:
         raise HTTPException(status_code=400, detail=f"Invalid command. Allowed: {ALLOWED_COMMANDS}")
-    
+
     commands = _load_commands()
+    now_ms = int(time.time() * 1000)
+    now_s = int(time.time())
+
+    # For movement commands, replace any currently active movement command
+    # for the same device so stale inputs do not pile up.
+    if payload.command in MOVEMENT_COMMANDS:
+        filtered: list[dict] = []
+        for item in commands:
+            same_device = item.get("device_id") == payload.device_id
+            same_kind = item.get("command") in MOVEMENT_COMMANDS
+            active = _is_active_status(item.get("status"))
+
+            if same_device and same_kind and active:
+                continue
+            filtered.append(item)
+        commands = filtered
+
     entry = {
-        "id": f"{payload.device_id}-{int(time.time() * 1000)}",
+        "id": f"{payload.device_id}-{now_ms}",
         "device_id": payload.device_id,
         "command": payload.command,
-        "payload": payload.payload, # Save the payload
-        "created_at": int(time.time()),
+        "payload": payload.payload or {},
+        "created_at": now_s,
         "status": "pending",
     }
+
     commands.append(entry)
     _save_commands(commands)
+
     return {"ok": True, "queued": entry}
 
 
@@ -92,14 +129,21 @@ def get_next_device_command(
     _require_device_secret(x_device_secret)
 
     commands = _load_commands()
+    next_index = None
     next_cmd = None
 
-    for item in commands:
+    # Return the oldest pending command for this device.
+    # Because movement commands are coalesced above, this stays responsive.
+    for idx, item in enumerate(commands):
         if item.get("device_id") == device_id and item.get("status") == "pending":
             item["status"] = "delivered"
             item["delivered_at"] = int(time.time())
+            next_index = idx
             next_cmd = item
             break
+
+    if next_index is not None:
+        commands[next_index] = next_cmd
 
     _save_commands(commands)
 
@@ -124,7 +168,7 @@ def ack_device_command(
             item["status"] = payload.status
             item["acked_at"] = int(time.time())
             item["note"] = payload.note
-            item["result"] = payload.result # Save the returned result (like the LLM answer)
+            item["result"] = payload.result
             updated = item
             break
 

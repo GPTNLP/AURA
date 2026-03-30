@@ -53,51 +53,20 @@ async function sendMove(command: MoveCmd, value?: number) {
 export default function ControlPage() {
   const [pitch, setPitch] = useState<number>(0);
   const [yaw, setYaw] = useState<number>(0);
-
-  const holdIntervalRef = useRef<number | null>(null);
   const activeMoveRef = useRef<MoveCmd | null>(null);
-  const stopSentRef = useRef<boolean>(false);
-
-  const clearHoldInterval = useCallback(() => {
-    if (holdIntervalRef.current !== null) {
-      window.clearInterval(holdIntervalRef.current);
-      holdIntervalRef.current = null;
-    }
-  }, []);
-
-  const sendSingleStop = useCallback(() => {
-    if (stopSentRef.current) return;
-    stopSentRef.current = true;
-    sendMove("stop");
-  }, []);
 
   const stopMove = useCallback(() => {
     if (!activeMoveRef.current) return;
-    clearHoldInterval();
     activeMoveRef.current = null;
-    sendSingleStop();
-  }, [clearHoldInterval, sendSingleStop]);
+    sendMove("stop");
+  }, []);
 
-  const startMove = useCallback(
-    (cmd: MoveCmd) => {
-      if (cmd === "stop" || cmd === "pitch" || cmd === "yaw") return;
-
-      if (activeMoveRef.current === cmd) return;
-
-      clearHoldInterval();
-      activeMoveRef.current = cmd;
-      stopSentRef.current = false;
-
-      sendMove(cmd);
-
-      holdIntervalRef.current = window.setInterval(() => {
-        if (activeMoveRef.current === cmd) {
-          sendMove(cmd);
-        }
-      }, 100);
-    },
-    [clearHoldInterval]
-  );
+  const startMove = useCallback((cmd: MoveCmd) => {
+    if (cmd === "stop" || cmd === "pitch" || cmd === "yaw") return;
+    if (activeMoveRef.current === cmd) return;
+    activeMoveRef.current = cmd;
+    sendMove(cmd);
+  }, []);
 
   useEffect(() => {
     const handlePointerUp = () => stopMove();
@@ -108,14 +77,11 @@ export default function ControlPage() {
     return () => {
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
-      clearHoldInterval();
     };
-  }, [stopMove, clearHoldInterval]);
+  }, [stopMove]);
 
   const handleStopAndReset = () => {
-    clearHoldInterval();
     activeMoveRef.current = null;
-    stopSentRef.current = false;
     setPitch(0);
     setYaw(0);
     sendMove("stop");
@@ -124,7 +90,6 @@ export default function ControlPage() {
   const bindMoveButton = (cmd: MoveCmd) => ({
     onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
       e.preventDefault();
-      (e.currentTarget as HTMLButtonElement).setPointerCapture?.(e.pointerId);
       startMove(cmd);
     },
     onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -135,21 +100,19 @@ export default function ControlPage() {
       e.preventDefault();
       stopMove();
     },
+    onContextMenu: (e: React.MouseEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+    },
   });
 
   return (
     <div className="page">
       <div className="control-header">
         <h1>Robot Control</h1>
-        <p className="control-subtitle">
-          Command the robot&apos;s movement and stance.
-        </p>
+        <p className="control-subtitle">Command the robot&apos;s movement and stance.</p>
       </div>
 
-      <div
-        className="control-grid"
-        style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}
-      >
+      <div className="control-grid" style={{ display: "flex", gap: "2rem", flexWrap: "wrap" }}>
         <section className="control-card" style={{ flex: "1 1 300px" }}>
           <h2>Movement</h2>
           <div className="control-divider" />

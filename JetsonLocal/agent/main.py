@@ -243,7 +243,7 @@ async def refresh_config():
     global runtime_config
     try:
         result = await asyncio.to_thread(api.get_config, DEVICE_ID)
-        runtime_config["poll_seconds"] = int(result.get("poll_seconds", runtime_config["poll_seconds"]))
+        runtime_config["poll_seconds"] = float(result.get("poll_seconds", runtime_config["poll_seconds"]))
         runtime_config["heartbeat_seconds"] = int(result.get("heartbeat_seconds", runtime_config["heartbeat_seconds"]))
         runtime_config["status_seconds"] = int(result.get("status_seconds", runtime_config["status_seconds"]))
         print(f"[CONFIG] success: {result}")
