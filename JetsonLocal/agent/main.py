@@ -69,7 +69,7 @@ class ConnectionManager:
 ui_manager = ConnectionManager()
 api = ApiClient()
 rag_system = None
-esp_serial = None
+esp_serial = serial.Serial(SERIAL_PORT, 115200, timeout=1)
 runtime_config = {
     "poll_seconds": 5,
     "heartbeat_seconds": HEARTBEAT_SECONDS,
