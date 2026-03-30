@@ -31,13 +31,11 @@ export default function SimulatorPage() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Voice state (mic capture)
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // ✅ prefs (loaded from localStorage)
   const [prefs, setPrefs] = useState(() => loadPrefs());
 
   const voiceInputEnabled = prefs.voiceInputEnabled;
@@ -119,28 +117,22 @@ export default function SimulatorPage() {
     }
   };
 
-  // cleanup
   useEffect(() => {
     return () => abortRef.current?.abort();
   }, []);
 
-  // auto-scroll
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [history, loading]);
 
-  // ✅ refresh prefs when Settings changes them
   useEffect(() => {
     const refresh = () => setPrefs(loadPrefs());
 
-    // fires when localStorage changes from another tab/window
     const onStorage = () => {
       refresh();
     };
 
-    // if Settings and Simulator are same tab, storage event doesn't always fire,
-    // so we also support a custom event. Dispatch it after saving prefs.
     const onCustom = () => refresh();
 
     window.addEventListener("storage", onStorage);
@@ -152,7 +144,6 @@ export default function SimulatorPage() {
     };
   }, []);
 
-  // backend ping
   useEffect(() => {
     let timer: any = null;
     let cancelled = false;
@@ -188,7 +179,6 @@ export default function SimulatorPage() {
     };
   }, [API_URL]);
 
-  // DB list
   useEffect(() => {
     let cancelled = false;
 
@@ -235,7 +225,9 @@ export default function SimulatorPage() {
     abortRef.current = controller;
 
     setStatusText("");
-    setHistory((prev) => [...prev, { role: "user", content: q }]);
+
+    const nextHistoryWithUser: ChatMsg[] = [...history, { role: "user", content: q }];
+    setHistory(nextHistoryWithUser);
     setQuery("");
     setLoading(true);
 
@@ -270,9 +262,12 @@ export default function SimulatorPage() {
           : "(No answer returned)";
 
       const sources = Array.isArray(data?.sources) ? data.sources : [];
-      setHistory((prev) => [...prev, { role: "ai", content: answer, sources }]);
+      const nextHistoryWithAi: ChatMsg[] = [
+        ...nextHistoryWithUser,
+        { role: "ai", content: answer, sources },
+      ];
+      setHistory(nextHistoryWithAi);
 
-      // 🔊 speak if enabled
       void speakText(answer);
 
       const latency = Math.round(performance.now() - t0);
@@ -282,13 +277,22 @@ export default function SimulatorPage() {
         prompt: q,
         response_preview: answer.slice(0, 600),
         latency_ms: latency,
-        meta: { db: activeDb, sources_count: sources.length },
+        meta: {
+          db: activeDb,
+          sources_count: sources.length,
+          sources,
+          messages: nextHistoryWithAi,
+        },
       });
     } catch (err: any) {
       if (err?.name === "AbortError") return;
 
       const msg = `Simulation Error: ${err?.message || String(err)}`;
-      setHistory((prev) => [...prev, { role: "error", content: msg }]);
+      const nextHistoryWithError: ChatMsg[] = [
+        ...nextHistoryWithUser,
+        { role: "error", content: msg },
+      ];
+      setHistory(nextHistoryWithError);
 
       const latency = Math.round(performance.now() - t0);
 
@@ -297,7 +301,10 @@ export default function SimulatorPage() {
         prompt: q,
         response_preview: msg.slice(0, 600),
         latency_ms: latency,
-        meta: { db: activeDb },
+        meta: {
+          db: activeDb,
+          messages: nextHistoryWithError,
+        },
       });
     } finally {
       setLoading(false);
@@ -375,7 +382,6 @@ export default function SimulatorPage() {
           boxShadow: "var(--shadow)",
         }}
       >
-        {/* Header */}
         <div
           style={{
             padding: 18,
@@ -433,7 +439,6 @@ export default function SimulatorPage() {
           </span>
         </div>
 
-        {/* DB picker */}
         <div
           style={{
             padding: 14,
@@ -494,7 +499,6 @@ export default function SimulatorPage() {
           )}
         </div>
 
-        {/* Chat history */}
         <div
           ref={scrollRef}
           style={{
@@ -598,7 +602,6 @@ export default function SimulatorPage() {
           )}
         </div>
 
-        {/* Input bar */}
         <div
           style={{
             padding: 14,
