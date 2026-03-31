@@ -2,18 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import "../../styles/cameraFeed.css";
 import { useAuth } from "../../services/authService";
 
-const RAW_BASE = import.meta.env.VITE_CAMERA_API_BASE as string | undefined;
-const TOKEN = import.meta.env.VITE_CAMERA_STREAM_TOKEN as string | undefined;
+const API_BASE = import.meta.env.VITE_CAMERA_API_BASE as string | undefined;
+const DEVICE_ID = (import.meta.env.VITE_DEVICE_ID as string | undefined) || "jetson-001";
 
-type DetectBox = { x1: number; y1: number; x2: number; y2: number };
-type DetectItem = {
-  label: string;
-  class_id: number;
-  confidence: number;
-  box: DetectBox;
-  resistor_value?: { label: string; class_id: number; confidence: number };
-};
-type DetectResp = { detections: DetectItem[]; width: number; height: number };
+type CameraMode = "raw" | "detection";
 
 export default function CameraFeedSecure() {
   const { token } = useAuth();
@@ -21,225 +13,142 @@ export default function CameraFeedSecure() {
   const [ok, setOk] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [src, setSrc] = useState("");
+  const [mode, setMode] = useState<CameraMode>("raw");
+  const [busy, setBusy] = useState(false);
+  const [statusText, setStatusText] = useState("Idle");
 
-  const [detecting, setDetecting] = useState(false);
-  const [detections, setDetections] = useState<DetectItem[]>([]);
-  const [detectErr, setDetectErr] = useState<string | null>(null);
-
-  const imgRef = useRef<HTMLImageElement | null>(null);
-  const overlayRef = useRef<HTMLCanvasElement | null>(null);
-
-  const timerRef = useRef<number | null>(null);
   const mountedRef = useRef(false);
+  const refreshTimerRef = useRef<number | null>(null);
 
-  const makeUrl = () => {
-    const base = (RAW_BASE || "").replace(/\/+$/, "");
+  const base = (API_BASE || "").replace(/\/+$/, "");
+
+  const authHeaders = () => ({
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  });
+
+  const buildFrameUrl = () => {
     if (!base) return "";
-    const t = TOKEN || "";
-    return `${base}/camera/stream?token=${encodeURIComponent(t)}&t=${Date.now()}&r=${Math.random()}`;
+    return `${base}/camera/latest?device_id=${encodeURIComponent(DEVICE_ID)}&t=${Date.now()}&r=${Math.random()}`;
   };
 
-  const hardClose = () => setSrc("");
+  const hardClose = () => {
+    setSrc("");
+    setOk(false);
+  };
 
-  const scheduleRefresh = (delayMs = 120) => {
-    if (timerRef.current) window.clearTimeout(timerRef.current);
+  const startPolling = () => {
+    if (refreshTimerRef.current) {
+      window.clearInterval(refreshTimerRef.current);
+    }
 
-    timerRef.current = window.setTimeout(() => {
+    refreshTimerRef.current = window.setInterval(() => {
       if (!mountedRef.current) return;
-      setOk(false);
-      setErr(null);
-      hardClose();
-      window.setTimeout(() => {
-        if (!mountedRef.current) return;
-        setSrc(makeUrl());
-      }, 40);
-    }, delayMs);
+      setSrc(buildFrameUrl());
+    }, 350);
   };
 
-  // Resize overlay canvas to match displayed <img>
-  const syncOverlaySize = () => {
-    const img = imgRef.current;
-    const cvs = overlayRef.current;
-    if (!img || !cvs) return;
-
-    const w = img.clientWidth;
-    const h = img.clientHeight;
-    if (!w || !h) return;
-
-    // match physical pixels to avoid blur
-    const dpr = window.devicePixelRatio || 1;
-    cvs.width = Math.round(w * dpr);
-    cvs.height = Math.round(h * dpr);
-    cvs.style.width = `${w}px`;
-    cvs.style.height = `${h}px`;
-
-    const ctx = cvs.getContext("2d");
-    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  };
-
-  const drawDetections = (items: DetectItem[]) => {
-    const img = imgRef.current;
-    const cvs = overlayRef.current;
-    if (!img || !cvs) return;
-
-    syncOverlaySize();
-
-    const ctx = cvs.getContext("2d");
-    if (!ctx) return;
-
-    const dispW = img.clientWidth;
-    const dispH = img.clientHeight;
-
-    // We need to map model coords (based on decoded image) to displayed pixels.
-    // We’ll estimate using the underlying natural size.
-    const natW = img.naturalWidth || dispW;
-    const natH = img.naturalHeight || dispH;
-
-    const sx = dispW / natW;
-    const sy = dispH / natH;
-
-    ctx.clearRect(0, 0, dispW, dispH);
-
-    // Basic box styling (no theme colors required)
-    ctx.lineWidth = 2;
-    ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
-
-    for (const d of items) {
-      const x = d.box.x1 * sx;
-      const y = d.box.y1 * sy;
-      const w = (d.box.x2 - d.box.x1) * sx;
-      const h = (d.box.y2 - d.box.y1) * sy;
-
-      // box
-      ctx.strokeStyle = "rgba(0, 255, 0, 0.95)";
-      ctx.strokeRect(x, y, w, h);
-
-      // label
-      const baseLabel = `${d.label} ${(d.confidence * 100).toFixed(0)}%`;
-      const rv = d.resistor_value?.label ? ` • ${d.resistor_value.label}` : "";
-      const text = baseLabel + rv;
-
-      const pad = 4;
-      const tw = ctx.measureText(text).width;
-      const th = 14;
-
-      ctx.fillStyle = "rgba(0,0,0,0.65)";
-      ctx.fillRect(x, Math.max(0, y - th - 4), tw + pad * 2, th + 4);
-
-      ctx.fillStyle = "white";
-      ctx.fillText(text, x + pad, Math.max(12, y - 8));
+  const stopPolling = () => {
+    if (refreshTimerRef.current) {
+      window.clearInterval(refreshTimerRef.current);
+      refreshTimerRef.current = null;
     }
   };
 
-  const clearOverlay = () => {
-    const img = imgRef.current;
-    const cvs = overlayRef.current;
-    if (!img || !cvs) return;
-    const ctx = cvs.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, cvs.width, cvs.height);
-  };
+  const activateCamera = async (newMode: CameraMode) => {
+    if (!base) return;
 
-  const captureFrameBlob = async (): Promise<Blob> => {
-    const img = imgRef.current;
-    if (!img) throw new Error("Camera image not ready yet.");
-
-    // Draw current MJPEG frame into a canvas
-    const c = document.createElement("canvas");
-    const w = img.naturalWidth || 1280;
-    const h = img.naturalHeight || 720;
-    c.width = w;
-    c.height = h;
-
-    const ctx = c.getContext("2d");
-    if (!ctx) throw new Error("Canvas not supported");
-
-    ctx.drawImage(img, 0, 0, w, h);
-
-    const blob: Blob | null = await new Promise((resolve) =>
-      c.toBlob((b) => resolve(b), "image/jpeg", 0.9)
-    );
-
-    if (!blob) throw new Error("Failed to capture frame");
-    return blob;
-  };
-
-  const runDetect = async () => {
-    if (!RAW_BASE) return;
-    if (detecting) return;
-
-    setDetectErr(null);
-    setDetecting(true);
+    setBusy(true);
+    setErr(null);
+    setStatusText(`Starting ${newMode}...`);
 
     try {
-      const blob = await captureFrameBlob();
-      const fd = new FormData();
-      fd.append("file", blob, "frame.jpg");
+      const res = await fetch(
+        `${base}/camera/control/activate?device_id=${encodeURIComponent(DEVICE_ID)}&mode=${encodeURIComponent(newMode)}`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: authHeaders(),
+        }
+      );
 
-      const base = RAW_BASE.replace(/\/+$/, "");
-      const res = await fetch(`${base}/api/detect/predict`, {
-        method: "POST",
-        body: fd,
-        credentials: "include",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-
-      const data = (await res.json().catch(() => null)) as DetectResp | null;
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        const msg = (data as any)?.detail || `Detect failed (${res.status})`;
-        throw new Error(msg);
+        throw new Error(data?.detail || `Activate failed (${res.status})`);
       }
 
-      const items = Array.isArray(data?.detections) ? data!.detections : [];
-      setDetections(items);
-      drawDetections(items);
+      setMode(newMode);
+      setStatusText(newMode === "raw" ? "Raw mode active" : "Detection mode active");
+
+      setSrc(buildFrameUrl());
+      startPolling();
     } catch (e: any) {
-      setDetectErr(e?.message || "Detection failed");
-      setDetections([]);
-      clearOverlay();
+      setErr(e?.message || "Failed to activate camera");
+      setStatusText("Camera start failed");
+      hardClose();
     } finally {
-      setDetecting(false);
+      setBusy(false);
     }
   };
 
-  // Mount/unmount lifecycle
+  const setCameraMode = async (newMode: CameraMode) => {
+    if (!base) return;
+    if (busy) return;
+    if (mode === newMode) return;
+
+    await activateCamera(newMode);
+  };
+
+  const deactivateCamera = async () => {
+    if (!base) return;
+
+    try {
+      await fetch(
+        `${base}/camera/control/deactivate?device_id=${encodeURIComponent(DEVICE_ID)}`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: authHeaders(),
+        }
+      );
+    } catch {
+      // ignore on unmount
+    } finally {
+      stopPolling();
+      setStatusText("Camera off");
+      hardClose();
+    }
+  };
+
   useEffect(() => {
     mountedRef.current = true;
-    scheduleRefresh(0);
+    activateCamera("raw");
 
-    const onResize = () => {
-      syncOverlaySize();
-      drawDetections(detections);
+    const onFocus = () => {
+      if (!mountedRef.current) return;
+      setSrc(buildFrameUrl());
     };
 
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      mountedRef.current = false;
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-      hardClose();
-      window.removeEventListener("resize", onResize);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Refresh when user returns
-  useEffect(() => {
-    const onFocus = () => scheduleRefresh(250);
     const onVis = () => {
-      if (document.visibilityState === "visible") scheduleRefresh(250);
+      if (!mountedRef.current) return;
+      if (document.visibilityState === "visible" && src) {
+        setSrc(buildFrameUrl());
+      }
     };
 
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVis);
+
     return () => {
+      mountedRef.current = false;
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVis);
+      stopPolling();
+      deactivateCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!RAW_BASE) {
+  if (!API_BASE) {
     return (
       <div className="cam-card">
         <div className="cam-card-header">
@@ -247,8 +156,7 @@ export default function CameraFeedSecure() {
           <div className="cam-status bad">● Missing VITE_CAMERA_API_BASE</div>
         </div>
         <div className="cam-help">
-          Add <code>VITE_CAMERA_API_BASE=http://127.0.0.1:9000</code> to your Website/.env and restart{" "}
-          <code>npm run dev</code>.
+          Add <code>VITE_CAMERA_API_BASE</code> and <code>VITE_DEVICE_ID</code> to your frontend env.
         </div>
       </div>
     );
@@ -260,83 +168,79 @@ export default function CameraFeedSecure() {
         <div style={{ flex: 1 }}>
           <div className="cam-title">Live Camera Feed</div>
           <div className={`cam-status ${ok ? "good" : "bad"}`}>● {ok ? "Connected" : "Disconnected"}</div>
+          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>{statusText}</div>
         </div>
 
         <button
-          onClick={runDetect}
-          disabled={!ok || detecting}
+          onClick={() => setCameraMode("raw")}
+          disabled={busy || mode === "raw"}
           style={{
             padding: "10px 12px",
             borderRadius: 12,
             border: "1px solid var(--card-border)",
-            background: "var(--card-bg)",
+            background: mode === "raw" ? "var(--accent, #dbeafe)" : "var(--card-bg)",
             fontWeight: 900,
-            cursor: !ok || detecting ? "not-allowed" : "pointer",
-            opacity: !ok || detecting ? 0.6 : 1,
+            cursor: busy || mode === "raw" ? "not-allowed" : "pointer",
+            opacity: busy || mode === "raw" ? 0.7 : 1,
           }}
-          title="Capture a frame and run YOLO detection"
         >
-          {detecting ? "Detecting…" : "Detect"}
+          Raw
         </button>
 
         <button
-          onClick={() => {
-            setDetections([]);
-            clearOverlay();
+          onClick={() => setCameraMode("detection")}
+          disabled={busy || mode === "detection"}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 12,
+            border: "1px solid var(--card-border)",
+            background: mode === "detection" ? "var(--accent, #dbeafe)" : "var(--card-bg)",
+            fontWeight: 900,
+            cursor: busy || mode === "detection" ? "not-allowed" : "pointer",
+            opacity: busy || mode === "detection" ? 0.7 : 1,
           }}
-          disabled={detections.length === 0}
+        >
+          Detection
+        </button>
+
+        <button
+          onClick={() => activateCamera(mode)}
+          disabled={busy}
           style={{
             padding: "10px 12px",
             borderRadius: 12,
             border: "1px solid var(--card-border)",
             background: "var(--card-bg)",
             fontWeight: 900,
-            cursor: detections.length === 0 ? "not-allowed" : "pointer",
-            opacity: detections.length === 0 ? 0.6 : 1,
+            cursor: busy ? "not-allowed" : "pointer",
+            opacity: busy ? 0.7 : 1,
           }}
-          title="Clear overlay"
         >
-          Clear
+          Refresh
         </button>
       </div>
 
       <div className="cam-frame" style={{ position: "relative" }}>
         {src ? (
-          <>
-            <img
-              ref={imgRef}
-              className="cam-img"
-              src={src}
-              alt="Camera stream"
-              crossOrigin="anonymous"
-              onLoad={() => {
-                setOk(true);
-                setErr(null);
-                syncOverlaySize();
-                drawDetections(detections);
-              }}
-              onError={() => {
-                setOk(false);
-                setErr("Stream failed (check backend /camera/stream)");
-                scheduleRefresh(500);
-              }}
-            />
-            <canvas
-              ref={overlayRef}
-              style={{
-                position: "absolute",
-                inset: 0,
-                pointerEvents: "none",
-              }}
-            />
-          </>
+          <img
+            className="cam-img"
+            src={src}
+            alt="Camera stream"
+            onLoad={() => {
+              setOk(true);
+              setErr(null);
+            }}
+            onError={() => {
+              setOk(false);
+              setErr("Frame unavailable yet");
+            }}
+          />
         ) : (
           <div className="cam-help">Connecting...</div>
         )}
       </div>
 
       {err && <div className="cam-error">{err}</div>}
-      {detectErr && <div className="cam-error">{detectErr}</div>}
     </div>
   );
 }

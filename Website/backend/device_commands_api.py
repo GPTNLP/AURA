@@ -24,6 +24,9 @@ ALLOWED_COMMANDS = {
     "sync_vectors",
     "pitch",
     "yaw",
+    "camera_activate_raw",
+    "camera_activate_detection",
+    "camera_deactivate",
 }
 
 MOVEMENT_COMMANDS = {"forward", "backward", "left", "right", "stop"}

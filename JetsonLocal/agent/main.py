@@ -312,6 +312,20 @@ async def config_loop():
         await asyncio.sleep(CONFIG_REFRESH_SECONDS)
 
 
+async def camera_upload_loop():
+    while True:
+        try:
+            status = camera_service.get_status()
+            if status.get("enabled") and status.get("running"):
+                mode = camera_service.get_mode()
+                jpeg = camera_service.get_jpeg()
+                if jpeg:
+                    await asyncio.to_thread(api.upload_camera_frame, DEVICE_ID, mode, jpeg)
+        except Exception as e:
+            print(f"[CAMERA_UPLOAD] failed: {e}")
+        await asyncio.sleep(0.35)
+
+
 async def command_loop():
     last_cmd = None
     last_cmd_time = 0.0
@@ -383,6 +397,57 @@ async def command_loop():
                             "device_id": DEVICE_ID,
                             "status": "failed",
                             "note": "ESP serial is not connected",
+                        })
+
+                elif cmd == "camera_activate_raw":
+                    try:
+                        camera_service.activate("raw")
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "completed",
+                            "note": "Camera activated in raw mode",
+                        })
+                    except Exception as e:
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "failed",
+                            "note": f"Camera raw activation failed: {e}",
+                        })
+
+                elif cmd == "camera_activate_detection":
+                    try:
+                        camera_service.activate("detection")
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "completed",
+                            "note": "Camera activated in detection mode",
+                        })
+                    except Exception as e:
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "failed",
+                            "note": f"Camera detection activation failed: {e}",
+                        })
+
+                elif cmd == "camera_deactivate":
+                    try:
+                        camera_service.deactivate()
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "completed",
+                            "note": "Camera deactivated",
+                        })
+                    except Exception as e:
+                        await asyncio.to_thread(api.ack_command, {
+                            "command_id": command_id,
+                            "device_id": DEVICE_ID,
+                            "status": "failed",
+                            "note": f"Camera deactivation failed: {e}",
                         })
 
                 elif cmd == "chat_prompt":
@@ -518,6 +583,7 @@ async def startup_event():
     asyncio.create_task(status_loop())
     asyncio.create_task(flush_loop())
     asyncio.create_task(command_loop())
+    asyncio.create_task(camera_upload_loop())
 
     print("[STARTUP] background loops started")
     send_or_queue_log("info", "startup_complete", "Jetson agent startup complete")

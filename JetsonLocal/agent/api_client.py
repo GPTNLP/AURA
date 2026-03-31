@@ -15,11 +15,12 @@ class ApiClient:
             self._url("/api/documents/download"),
             params={"path": path},
             headers=self._headers(),
-            stream=True
+            stream=True,
+            timeout=self.timeout,
         )
         r.raise_for_status()
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        with open(dest_path, 'wb') as f:
+        with open(dest_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
 
@@ -30,12 +31,31 @@ class ApiClient:
             fp = os.path.join(working_dir, fn)
             if os.path.exists(fp):
                 files.append(("files", (fn, open(fp, "rb"))))
-        
+
         if files:
-            r = requests.post(url, files=files, headers={"X-Device-Secret": DEVICE_SHARED_SECRET})
+            r = requests.post(
+                url,
+                files=files,
+                headers={"X-Device-Secret": DEVICE_SHARED_SECRET},
+                timeout=self.timeout,
+            )
             r.raise_for_status()
             for _, (_, f) in files:
                 f.close()
+
+    def upload_camera_frame(self, device_id: str, mode: str, jpeg_bytes: bytes) -> Dict[str, Any]:
+        r = requests.post(
+            self._url("/device/camera/frame"),
+            params={"device_id": device_id, "mode": mode},
+            data=jpeg_bytes,
+            headers={
+                "Content-Type": "image/jpeg",
+                "X-Device-Secret": DEVICE_SHARED_SECRET,
+            },
+            timeout=self.timeout,
+        )
+        r.raise_for_status()
+        return r.json()
 
     def _headers(self) -> Dict[str, str]:
         return {
