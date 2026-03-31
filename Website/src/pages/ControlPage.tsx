@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import "../styles/controlPage.css";
 
 type MoveCmd =
@@ -55,12 +55,6 @@ export default function ControlPage() {
   const [yaw, setYaw] = useState<number>(0);
   const activeMoveRef = useRef<MoveCmd | null>(null);
 
-  const stopMove = useCallback(() => {
-    if (!activeMoveRef.current) return;
-    activeMoveRef.current = null;
-    sendMove("stop");
-  }, []);
-
   const startMove = useCallback((cmd: MoveCmd) => {
     if (cmd === "stop" || cmd === "pitch" || cmd === "yaw") return;
     if (activeMoveRef.current === cmd) return;
@@ -68,37 +62,17 @@ export default function ControlPage() {
     sendMove(cmd);
   }, []);
 
-  useEffect(() => {
-    const handlePointerUp = () => stopMove();
-
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
-
-    return () => {
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-    };
-  }, [stopMove]);
-
-  const handleStopAndReset = () => {
+  const handleStopAndReset = useCallback(() => {
     activeMoveRef.current = null;
     setPitch(0);
     setYaw(0);
     sendMove("stop");
-  };
+  }, []);
 
   const bindMoveButton = (cmd: MoveCmd) => ({
     onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
       e.preventDefault();
       startMove(cmd);
-    },
-    onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => {
-      e.preventDefault();
-      stopMove();
-    },
-    onPointerCancel: (e: React.PointerEvent<HTMLButtonElement>) => {
-      e.preventDefault();
-      stopMove();
     },
     onContextMenu: (e: React.MouseEvent<HTMLButtonElement>) => {
       e.preventDefault();

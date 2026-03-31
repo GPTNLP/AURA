@@ -17,15 +17,14 @@ const uint16_t SERVO_HOME[NUM_SERVOS] = {1900, 1100, 1400, 1350};
 const int8_t SIGN[NUM_SERVOS] = {+1, -1, +1, -1};
 
 const uint16_t SERVO_FREQ = 50;
-const uint16_t STEP_US = 20;
-const unsigned long MOTION_UPDATE_MS = 10;
-const unsigned long GAIT_UPDATE_MS = 180;
-const unsigned long COMMAND_TIMEOUT_MS = 500;
+const uint16_t STEP_US = 24;
+const unsigned long MOTION_UPDATE_MS = 15;
+const unsigned long GAIT_UPDATE_MS = 220;
 
-const int SHOULDER_SWING = 120;
-const int LEG_SWING = 160;
-const int TURN_SHOULDER = 90;
-const int TURN_LEG = 120;
+const int SHOULDER_SWING = 100;
+const int LEG_SWING = 140;
+const int TURN_SHOULDER = 80;
+const int TURN_LEG = 100;
 
 enum Mode {
   STOP_MODE,
@@ -42,7 +41,6 @@ uint16_t targetUs[NUM_SERVOS];
 
 unsigned long lastMotionUpdate = 0;
 unsigned long lastGaitUpdate = 0;
-unsigned long lastCommandTime = 0;
 String serialBuffer = "";
 bool gaitPhase = false;
 
@@ -76,10 +74,6 @@ int offsetFromHome(uint8_t i, int offset) {
   return SERVO_HOME[i] + SIGN[i] * offset;
 }
 
-void touchCommand() {
-  lastCommandTime = millis();
-}
-
 void stopMotion() {
   currentMode = STOP_MODE;
   gaitPhase = false;
@@ -89,25 +83,21 @@ void stopMotion() {
 
 void setModeForward() {
   currentMode = FORWARD_MODE;
-  touchCommand();
   Serial.println("ACK:MOVE:forward");
 }
 
 void setModeBackward() {
   currentMode = BACKWARD_MODE;
-  touchCommand();
   Serial.println("ACK:MOVE:backward");
 }
 
 void setModeLeft() {
   currentMode = LEFT_MODE;
-  touchCommand();
   Serial.println("ACK:MOVE:left");
 }
 
 void setModeRight() {
   currentMode = RIGHT_MODE;
-  touchCommand();
   Serial.println("ACK:MOVE:right");
 }
 
@@ -258,15 +248,6 @@ void serviceMotion() {
   }
 }
 
-void serviceTimeout() {
-  if (currentMode == STOP_MODE) return;
-
-  if (millis() - lastCommandTime > COMMAND_TIMEOUT_MS) {
-    Serial.println("TIMEOUT");
-    stopMotion();
-  }
-}
-
 void setup() {
   Serial.begin(115200);
   delay(1500);
@@ -296,7 +277,6 @@ void setup() {
   }
 
   setHomeTargets();
-  touchCommand();
 
   Serial.println("READY");
   Serial.println("Commands: forward backward left right stop");
@@ -304,7 +284,6 @@ void setup() {
 
 void loop() {
   serviceSerial();
-  serviceTimeout();
   serviceGait();
   serviceMotion();
 }
