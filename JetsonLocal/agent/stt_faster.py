@@ -12,20 +12,29 @@ from faster_whisper import WhisperModel
 from pynput import keyboard
 
 
-BAD_WORDS = ["badword1", "badword2", "fuck", "shit", "bitch"]
-
+BAD_WORD_PATTERNS = [
+    r"fuck\w*",
+    r"shit\w*",
+    r"bitch\w*",
+    r"ass",
+    r"asshole\w*",
+]
 
 def censor_text(text: str) -> str:
-    def repl(m):
-        return "█" * len(m.group(0))
-
-    pattern = r"(?i)\b(" + "|".join(map(re.escape, BAD_WORDS)) + r")\b"
-    return re.sub(pattern, repl, text)
+    for pattern in BAD_WORD_PATTERNS:
+        text = re.sub(
+            rf"(?i)\b({pattern})\b",
+            lambda m: "█" * len(m.group(0)),
+            text
+        )
+    return text
 
 
 def contains_bad_language(text: str) -> bool:
-    pattern = r"(?i)\b(" + "|".join(map(re.escape, BAD_WORDS)) + r")\b"
-    return re.search(pattern, text) is not None
+    for pattern in BAD_WORD_PATTERNS:
+        if re.search(rf"(?i)\b({pattern})\b", text):
+            return True
+    return False
 
 
 class SpeechToText:
