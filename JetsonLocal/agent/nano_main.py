@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 # Import from your existing files
-from config import DEFAULT_MODEL, EMBEDDING_MODEL, STORAGE_DIR
+from config import DEFAULT_MODEL, EMBEDDING_MODEL, STORAGE_DIR, STATIC_DIR
 from lightrag_local import LightRAG, OllamaClient
 
 # Configurations
@@ -22,8 +22,7 @@ DB_NAME = "jetson_local_db"
 
 app = FastAPI(title="AURA Edge API (Jetson Orin Nano)")
 
-# Serve the frontend static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # WebSocket Connection Manager for the UI
 class ConnectionManager:
@@ -128,7 +127,7 @@ async def startup_event():
 @app.get("/")
 async def serve_ui():
     """Serves the main frontend UI on the root URL."""
-    return FileResponse("static/index.html")
+    return FileResponse(str(STATIC_DIR / "index.html"))
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
