@@ -1,67 +1,66 @@
-.cam-card {
+.camera-feed-card {
   width: min(1300px, 100%);
-  border-radius: 16px;
+  border-radius: 20px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(120, 150, 255, 0.18);
   box-shadow: 0 0 40px rgba(0, 0, 0, 0.25);
   overflow: hidden;
+  padding: 20px;
 }
 
-.cam-card-header {
+.camera-feed-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 18px;
-  border-bottom: 1px solid rgba(120, 150, 255, 0.12);
-  background: rgba(255, 255, 255, 0.02);
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
-.cam-title {
-  font-size: 16px;
+.camera-feed-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--text, #e5eefc);
+}
+
+.camera-status-badge {
+  font-size: 0.95rem;
   font-weight: 700;
-  color: var(--text);
-}
-
-.cam-status {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-.cam-status.good {
+.camera-status-badge.connected {
   color: #36d399;
 }
 
-.cam-status.bad {
+.camera-status-badge.disconnected {
   color: #ff7b7b;
 }
 
-.cam-frame {
-  padding: 18px;
-  display: flex;
-  justify-content: center;
-}
-
-.cam-img {
-  width: min(1300px, 100%);
+.camera-frame {
+  width: 100%;
+  max-width: 1300px;
   aspect-ratio: 16 / 9;
-  border-radius: 14px;
+  border-radius: 16px;
   object-fit: contain;
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid rgba(120, 150, 255, 0.16);
+  display: block;
 }
 
-.cam-error {
-  padding: 0 18px 16px 18px;
-  color: #ff9b9b;
-  font-size: 13px;
-}
-
-.cam-help {
-  padding: 16px 18px;
-  color: var(--muted-text);
-  font-size: 13px;
+.camera-placeholder {
+  width: 100%;
+  max-width: 1300px;
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  border: 1px solid rgba(120, 150, 255, 0.16);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--muted-text, #9fb0c8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 600;
 }
