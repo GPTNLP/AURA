@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 from pathlib import Path
@@ -11,9 +12,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_PATH = BASE_DIR / "models" / "component_best.pt"
 
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -35,27 +33,6 @@ def _env_str(name: str, default: str) -> str:
     return value.strip()
 
 
-def argus_pipeline(
-    sensor_id: int,
-    width: int,
-    height: int,
-    fps: int,
-    flip_method: int,
-) -> str:
-    return (
-        f"nvarguscamerasrc sensor-id={sensor_id} ! "
-        f"video/x-raw(memory:NVMM), "
-        f"width=(int){width}, height=(int){height}, "
-        f"format=(string)NV12, framerate=(fraction){fps}/1 ! "
-        f"nvvidconv flip-method={flip_method} ! "
-        f"video/x-raw, "
-        f"width=(int){width}, height=(int){height}, "
-        f"format=(string)BGRx ! "
-=======
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
 def gstreamer_pipeline(
     sensor_id: int = 0,
     capture_width: int = 1280,
@@ -67,19 +44,19 @@ def gstreamer_pipeline(
 ) -> str:
     return (
         f"nvarguscamerasrc sensor-id={sensor_id} ! "
-        f"video/x-raw(memory:NVMM), width=(int){capture_width}, height=(int){capture_height}, "
-        f"format=(string)NV12, framerate=(fraction){framerate}/1 ! "
+        f"video/x-raw(memory:NVMM), "
+        f"width=(int){capture_width}, "
+        f"height=(int){capture_height}, "
+        f"format=(string)NV12, "
+        f"framerate=(fraction){framerate}/1 ! "
         f"nvvidconv flip-method={flip_method} ! "
-        f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
+        f"video/x-raw, "
+        f"width=(int){display_width}, "
+        f"height=(int){display_height}, "
+        f"format=(string)BGRx ! "
         f"videoconvert ! "
-        f"video/x-raw, format=(string)BGR ! appsink drop=true max-buffers=1 sync=false"
+        f"video/x-raw, format=(string)BGR ! "
+        f"appsink drop=true max-buffers=1 sync=false"
     )
 
 
@@ -125,16 +102,7 @@ class CameraService:
         self.stream_clients = 0
 
         self.consecutive_failures = 0
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
         self.capture_backend = "none"
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
 
         self.kernel = np.array(
             [
@@ -147,13 +115,14 @@ class CameraService:
 
         self.model = None
         if MODEL_PATH.exists():
-            self.model = YOLO(str(MODEL_PATH))
+            try:
+                self.model = YOLO(str(MODEL_PATH))
+            except Exception as e:
+                self.model = None
+                self.last_error = f"Failed to load model: {e}"
         else:
             self.last_error = f"Model not found: {MODEL_PATH}"
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
     def _read_probe_frame(
         self,
         cap: cv2.VideoCapture,
@@ -161,7 +130,6 @@ class CameraService:
         tries: int = 30,
         delay_s: float = 0.08,
     ):
-        # Warm up the Argus pipeline first
         for _ in range(warmup_frames):
             try:
                 cap.read()
@@ -178,34 +146,24 @@ class CameraService:
         return None
 
     def _open_argus_camera(self) -> cv2.VideoCapture:
-        pipeline = argus_pipeline(
-=======
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-    def _open_camera(self) -> cv2.VideoCapture:
         pipeline = gstreamer_pipeline(
->>>>>>> parent of ff1c4d5 (fixing camera issue)
             sensor_id=self.sensor_id,
-            width=self.width,
-            height=self.height,
-            fps=self.fps,
+            capture_width=self.width,
+            capture_height=self.height,
+            display_width=self.width,
+            display_height=self.height,
+            framerate=self.fps,
             flip_method=self.flip_method,
         )
+
         cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         if not cap.isOpened():
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-            raise RuntimeError("Could not open Argus camera pipeline.")
+            raise RuntimeError("Could not open Jetson CSI camera.")
 
         frame = self._read_probe_frame(cap)
         if frame is None:
             cap.release()
-            raise RuntimeError(
-                "Argus pipeline opened but failed to read a usable frame after warmup."
-            )
+            raise RuntimeError("Jetson CSI camera opened but failed to read a usable frame after warmup.")
 
         return cap
 
@@ -213,21 +171,12 @@ class CameraService:
         if self.camera_backend != "argus":
             raise RuntimeError(
                 f"Unsupported CAMERA_BACKEND={self.camera_backend}. "
-                f"For this CSI camera, use CAMERA_BACKEND=argus."
+                f"Set CAMERA_BACKEND=argus for this camera."
             )
 
         cap = self._open_argus_camera()
         self.capture_backend = "argus"
         self.last_error = None
-=======
-            raise RuntimeError("Could not open Jetson CSI camera.")
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
-            raise RuntimeError("Could not open Jetson CSI camera.")
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
-            raise RuntimeError("Could not open Jetson CSI camera.")
->>>>>>> parent of ff1c4d5 (fixing camera issue)
         return cap
 
     def _close_camera(self) -> None:
@@ -236,10 +185,12 @@ class CameraService:
                 self.cap.release()
             except Exception:
                 pass
+
         self.cap = None
         self.latest_raw_jpeg = None
         self.latest_annotated_jpeg = None
         self.latest_detections = []
+        self.capture_backend = "none"
 
     def activate(self, mode: str = "raw") -> None:
         mode = (mode or "raw").strip().lower()
@@ -394,9 +345,6 @@ class CameraService:
                 ret, frame = self.cap.read()
                 if not ret or frame is None:
                     self.consecutive_failures += 1
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
                     self.last_error = (
                         f"Failed to read frame ({self.consecutive_failures}) "
                         f"on backend={self.capture_backend}"
@@ -408,27 +356,6 @@ class CameraService:
                             f"Camera read timeout on backend={self.capture_backend}, "
                             f"restarting camera"
                         )
-=======
-                    self.last_error = f"Failed to read frame ({self.consecutive_failures})"
-                    time.sleep(0.05)
-
-                    if self.consecutive_failures >= 10:
-                        self.last_error = "Camera read timeout, restarting pipeline"
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
-                    self.last_error = f"Failed to read frame ({self.consecutive_failures})"
-                    time.sleep(0.05)
-
-                    if self.consecutive_failures >= 10:
-                        self.last_error = "Camera read timeout, restarting pipeline"
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
-                    self.last_error = f"Failed to read frame ({self.consecutive_failures})"
-                    time.sleep(0.05)
-
-                    if self.consecutive_failures >= 10:
-                        self.last_error = "Camera read timeout, restarting pipeline"
->>>>>>> parent of ff1c4d5 (fixing camera issue)
                         self.restart_camera()
                     continue
 
@@ -494,19 +421,10 @@ class CameraService:
                 "resolution": {"width": self.width, "height": self.height},
                 "fps": self.fps,
                 "idle_timeout_seconds": self.idle_timeout_seconds,
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
                 "capture_backend": self.capture_backend,
                 "camera_backend_requested": self.camera_backend,
                 "sensor_id": self.sensor_id,
                 "flip_method": self.flip_method,
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
-=======
->>>>>>> parent of ff1c4d5 (fixing camera issue)
             }
 
 
