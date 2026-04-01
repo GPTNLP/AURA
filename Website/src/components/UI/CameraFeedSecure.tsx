@@ -102,13 +102,39 @@ export default function CameraFeedSecure() {
 
   if (!API_BASE) {
     return (
-      <div className="cam-card">
-        <div className="cam-card-header">
-          <div className="cam-title">Live Camera Feed</div>
-          <div className="cam-status bad">● Missing VITE_CAMERA_API_BASE</div>
+      <div
+        className="cam-card-header"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          {/* LEFT SIDE */}
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div className="cam-title">Live Camera Feed</div>
+            <div className={`cam-status ${ok ? "good" : "bad"}`}>
+              {ok ? "● Live" : "● Waiting"}
+            </div>
+          </div>
+
+          {/* RIGHT SIDE (buttons) */}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setCameraMode("raw")} disabled={busy || mode === "raw"}>
+              Raw
+            </button>
+
+            <button onClick={() => setCameraMode("detection")} disabled={busy || mode === "detection"}>
+              Detection
+            </button>
+
+            <button onClick={() => setStreamNonce((n) => n + 1)} disabled={busy}>
+              Refresh
+            </button>
+          </div>
         </div>
-        <div className="cam-help">Set VITE_CAMERA_API_BASE in your frontend env.</div>
-      </div>
     );
   }
 
