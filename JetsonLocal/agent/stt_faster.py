@@ -12,20 +12,37 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 
-WAKE_PHRASES = [
-    "hey aura",
-    "hi aura",
-    "okay aura",
-    "ok aura",
-    "yo aura",
-    "hey ora",
-    "hey arua",
+# ============================================================
+# TUNING
+# ============================================================
+# Raise these in noisy environments
+WAKE_AUDIO_THRESHOLD = 0.035       # ignore quiet / far audio for wake checks
+COMMAND_AUDIO_THRESHOLD = 0.020    # ignore quiet command chunks
+END_SILENCE_SECONDS = 1.1          # how long silence before command is "done"
+WAKE_CHUNK_SECONDS = 1.5           # wake check chunk length
+COMMAND_CHUNK_SECONDS = 0.35       # command loop chunk size
+COMMAND_TIMEOUT_SECONDS = 10.0     # if user says nothing after wake, go back
+NEAR_FIELD_BOOST = 1.0             # keep at 1.0 usually; lower if clipping
+USE_ONLY_LEFT_CHANNEL = True       # NanoMic shows 2 input channels; use one
+
+
+# ============================================================
+# PHRASES / RULES
+# ============================================================
+WAKE_PATTERNS = [
+    r"\bhey\s+aura\b",
+    r"\bhi\s+aura\b",
+    r"\bok(?:ay)?\s+aura\b",
+    r"\byo\s+aura\b",
+    r"\bhey\s+ora\b",
+    r"\bhey\s+arua\b",
 ]
 
 MOVEMENT_PATTERNS = {
     "forward": [
         "move forward",
         "go forward",
+        "drive forward",
         "forward",
     ],
     "backward": [
@@ -33,23 +50,24 @@ MOVEMENT_PATTERNS = {
         "go backward",
         "move back",
         "go back",
+        "drive backward",
         "backward",
         "back",
     ],
     "left": [
-        "go to the left",
-        "move to the left",
         "turn left",
         "go left",
         "move left",
+        "move to the left",
+        "go to the left",
         "left",
     ],
     "right": [
-        "go to the right",
-        "move to the right",
         "turn right",
         "go right",
         "move right",
+        "move to the right",
+        "go to the right",
         "right",
     ],
     "stop": [
@@ -57,20 +75,29 @@ MOVEMENT_PATTERNS = {
         "stop",
         "halt",
         "pause",
+        "freeze",
     ],
 }
+
+ACTION_WORDS = [
+    "move", "go", "turn", "drive", "stop", "halt", "pause", "freeze"
+]
 
 BAD_WORD_PATTERNS = [
     r"fuck\w*",
     r"shit\w*",
     r"bitch\w*",
-    r"ass",
     r"asshole\w*",
+    r"\bass\b",
 ]
 
 
+# ============================================================
+# TEXT HELPERS
+# ============================================================
 def normalize_text(text: str) -> str:
     text = text.lower()
+    text = text.replace("a u r a", "aura")
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
@@ -95,41 +122,66 @@ def contains_bad_language(text: str) -> bool:
 
 def contains_wake_phrase(text: str) -> bool:
     norm = normalize_text(text)
-    for phrase in WAKE_PHRASES:
-        if normalize_text(phrase) in norm:
+    for pattern in WAKE_PATTERNS:
+        if re.search(pattern, norm):
             return True
     return False
 
 
 def remove_wake_phrase(text: str) -> str:
     norm = normalize_text(text)
-    for phrase in WAKE_PHRASES:
-        phrase_norm = normalize_text(phrase)
-        norm = re.sub(rf"\b{re.escape(phrase_norm)}\b", " ", norm)
+    for pattern in WAKE_PATTERNS:
+        norm = re.sub(pattern, " ", norm)
     norm = re.sub(r"\s+", " ", norm).strip()
     return norm
 
 
+def classify_intent(text: str) -> str:
+    """
+    Returns:
+      - "movement"
+      - "llm"
+      - "empty"
+    """
+    norm = normalize_text(text)
+    if not norm:
+        return "empty"
+
+    movement = detect_last_movement_command(norm)
+    if movement:
+        return "movement"
+
+    return "llm"
+
+
 def detect_last_movement_command(text: str):
     norm = normalize_text(text)
-
-    # Only trigger if there's an action verb present
-    ACTION_WORDS = ["move", "go", "turn", "stop", "halt"]
-
-    has_action_word = any(word in norm for word in ACTION_WORDS)
-
-    # If no action word AND not a short command → ignore
-    if not has_action_word and len(norm.split()) > 2:
+    if not norm:
         return None
 
+    # Stricter logic:
+    # 1) If there is an explicit action phrase, use it
+    # 2) If input is very short, allow raw direction words
+    # 3) Otherwise do NOT trigger on words like "right" in normal questions
+
+    has_action_word = any(re.search(rf"\b{re.escape(word)}\b", norm) for word in ACTION_WORDS)
+    word_count = len(norm.split())
+
     matches = []
+
     for command, phrases in MOVEMENT_PATTERNS.items():
         for phrase in phrases:
             phrase_norm = normalize_text(phrase)
-            pattern = rf"\b{re.escape(phrase_norm)}\b"
 
+            # Reject plain "left"/"right"/"forward"/etc in long sentences
+            is_single_word_direction = phrase_norm in {"left", "right", "forward", "back", "backward", "stop"}
+
+            if is_single_word_direction and word_count > 2 and not has_action_word:
+                continue
+
+            pattern = rf"\b{re.escape(phrase_norm)}\b"
             for match in re.finditer(pattern, norm):
-                matches.append((match.start(), command))
+                matches.append((match.start(), command, phrase_norm))
 
     if not matches:
         return None
@@ -137,6 +189,10 @@ def detect_last_movement_command(text: str):
     matches.sort(key=lambda x: x[0])
     return matches[-1][1]
 
+
+# ============================================================
+# AUDIO / STT
+# ============================================================
 class SpeechToText:
     def __init__(
         self,
@@ -144,13 +200,12 @@ class SpeechToText:
         input_device: int = 4,
         device_sample_rate: int = 48000,
         target_sample_rate: int = 16000,
-        channels: int = 1,
+        channels: int = 2,
         device: str = "cpu",
         compute_type: str = "int8",
         language: str = "en",
         task: str = "transcribe",
         log_path: str = "~/SDP/AURA/JetsonLocal/storage/transcriptions.log",
-        silence_threshold: float = 0.015,
     ):
         print(f"[STT] Loading faster-whisper model '{model_size}'...")
         self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
@@ -163,7 +218,22 @@ class SpeechToText:
         self.language = language
         self.task = task
         self.log_path = os.path.expanduser(log_path)
-        self.silence_threshold = silence_threshold
+
+    def _prepare_audio(self, audio: np.ndarray) -> np.ndarray:
+        """
+        Make audio mono and optionally use only one channel.
+        """
+        if audio.ndim == 1:
+            mono = audio.astype(np.float32)
+        else:
+            if USE_ONLY_LEFT_CHANNEL:
+                mono = audio[:, 0].astype(np.float32)
+            else:
+                mono = np.mean(audio, axis=1).astype(np.float32)
+
+        mono = mono * NEAR_FIELD_BOOST
+        mono = np.clip(mono, -1.0, 1.0)
+        return mono.reshape(-1, 1)
 
     def _resample_audio(self, audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
         if orig_sr == target_sr:
@@ -193,7 +263,8 @@ class SpeechToText:
         if audio is None or len(audio) == 0:
             return ""
 
-        audio_16k = self._resample_audio(audio, self.device_sample_rate, self.target_sample_rate)
+        mono = self._prepare_audio(audio)
+        audio_16k = self._resample_audio(mono, self.device_sample_rate, self.target_sample_rate)
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
             temp_filename = tmp_file.name
@@ -227,29 +298,48 @@ class SpeechToText:
         sd.wait()
         return audio
 
-    def listen_for_wake_word(self, chunk_seconds: float = 1.8) -> bool:
-        audio = self.record_fixed(chunk_seconds)
+    def analyze_level(self, audio: np.ndarray):
+        mono = self._prepare_audio(audio).flatten()
+        peak = float(np.max(np.abs(mono))) if len(mono) else 0.0
+        mean = float(np.mean(np.abs(mono))) if len(mono) else 0.0
+        return peak, mean
 
-        peak = float(np.max(np.abs(audio)))
-        if peak < self.silence_threshold:
-            return False
+    def listen_for_wake_word(self, chunk_seconds: float = WAKE_CHUNK_SECONDS):
+        """
+        Returns:
+          (woke: bool, text: str, leftover_text: str)
+        leftover_text is the text after removing wake phrase,
+        so it supports:
+          'hey aura move forward'
+        in one shot.
+        """
+        audio = self.record_fixed(chunk_seconds)
+        peak, mean = self.analyze_level(audio)
+
+        if peak < WAKE_AUDIO_THRESHOLD:
+            return False, "", ""
 
         text = self._transcribe_audio_array(audio)
         if not text:
-            return False
+            return False, "", ""
 
         print(f"[WAKE CHECK] {text}")
 
-        if contains_wake_phrase(text):
-            return True
+        if not contains_wake_phrase(text):
+            return False, text, ""
 
-        return False
+        leftover = remove_wake_phrase(text)
+        return True, text, leftover
 
-    def listen_until_done(self, timeout_seconds: float = 10.0, end_silence_seconds: float = 1.2) -> str:
+    def listen_until_done(
+        self,
+        timeout_seconds: float = COMMAND_TIMEOUT_SECONDS,
+        end_silence_seconds: float = END_SILENCE_SECONDS,
+        chunk_seconds: float = COMMAND_CHUNK_SECONDS,
+    ) -> str:
         print("[AURA] Listening...")
 
         start_time = time.time()
-        chunk_seconds = 0.4
         collected = []
 
         speech_started = False
@@ -259,9 +349,9 @@ class SpeechToText:
             audio = self.record_fixed(chunk_seconds)
             collected.append(audio)
 
-            level = float(np.mean(np.abs(audio)))
+            peak, mean = self.analyze_level(audio)
 
-            if level > self.silence_threshold:
+            if peak >= COMMAND_AUDIO_THRESHOLD:
                 speech_started = True
                 silence_after_speech = 0.0
             else:
@@ -275,9 +365,8 @@ class SpeechToText:
             return ""
 
         full_audio = np.concatenate(collected, axis=0)
+        peak, mean = self.analyze_level(full_audio)
 
-        peak = float(np.max(np.abs(full_audio)))
-        mean = float(np.mean(np.abs(full_audio)))
         print(f"[AURA] Peak level: {peak:.6f}")
         print(f"[AURA] Mean level: {mean:.6f}")
 
@@ -293,35 +382,46 @@ class SpeechToText:
             f.write(f"[{timestamp}] {text}\n")
 
 
+# ============================================================
+# ACTION ROUTING
+# ============================================================
 def handle_user_text(text: str):
     cleaned = remove_wake_phrase(text)
-    command = detect_last_movement_command(cleaned)
+    movement = detect_last_movement_command(cleaned)
+    intent = classify_intent(cleaned)
 
     print("\n" + "=" * 60)
     print(f"RAW TEXT: {text}")
     print(f"CLEANED TEXT: {cleaned}")
 
-    if command:
-        print(f"COMMAND: {command}")
-        print("ACTION TYPE: MOVEMENT")
-    else:
-        print(f"LLM QUERY: {cleaned if cleaned else text}")
+    if intent == "movement" and movement:
+        print(f"ACTION TYPE: MOVEMENT")
+        print(f"COMMAND: {movement}")
+        # later: send to ESP32 here
+    elif intent == "llm":
         print("ACTION TYPE: LLM")
+        print(f"LLM QUERY: {cleaned if cleaned else text}")
+        # later: send to LLM here
+    else:
+        print("ACTION TYPE: NONE")
+        print("No usable command or query detected.")
     print("=" * 60)
 
 
+# ============================================================
+# MAIN LOOP
+# ============================================================
 def main():
     stt = SpeechToText(
         model_size="base",
         input_device=4,
         device_sample_rate=48000,
         target_sample_rate=16000,
-        channels=1,
+        channels=2,   # NanoMic reports 2 input channels
         device="cpu",
         compute_type="int8",
         language="en",
         task="transcribe",
-        silence_threshold=0.015,
     )
 
     print("[STT] Device info:")
@@ -331,34 +431,43 @@ def main():
     print(" AURA VOICE MODE")
     print("=" * 60)
     print("Say 'Hey AURA' to activate.")
-    print("Then it will listen for up to 10 seconds.")
-    print("If you start speaking, it will stay active until you finish.")
-    print("If no speech is heard, it returns to wake mode.")
+    print("You can say either:")
+    print("  - 'Hey AURA' ... then pause ... then speak")
+    print("  - 'Hey AURA move forward' all in one shot")
+    print("If no speech is heard after wake, it returns to wake mode.")
     print("Press Ctrl+C to exit.")
     print("-" * 60)
 
     try:
         while True:
-            woke = stt.listen_for_wake_word(chunk_seconds=1.8)
+            woke, wake_text, leftover = stt.listen_for_wake_word()
+
             if not woke:
                 continue
 
             print("[AURA] Wake word detected.")
 
-            text = stt.listen_until_done(timeout_seconds=10.0, end_silence_seconds=1.2)
+            # One-shot case:
+            # "hey aura move forward actually go left"
+            if leftover:
+                print("[AURA] Immediate speech detected after wake phrase.")
+                final_text = leftover
+            else:
+                final_text = stt.listen_until_done()
 
-            if not text:
+            if not final_text:
                 print("[AURA] No speech heard. Returning to wake mode.")
                 print("-" * 60)
                 continue
 
-            censored = censor_text(text)
+            censored = censor_text(final_text)
             stt.log_transcript(censored)
 
-            if contains_bad_language(text):
+            if contains_bad_language(final_text):
                 print("[AURA] Warning: inappropriate language detected.")
 
-            handle_user_text(text)
+            handle_user_text(final_text)
+
             print("[AURA] Returning to wake mode.")
             print("-" * 60)
 
