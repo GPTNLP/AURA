@@ -1,185 +1,142 @@
-.dashboard-shell {
-  width: min(1400px, 100%);
-  margin: 0 auto;
+.dashboard-page {
   padding: 24px;
-  color: var(--text, #e5eefc);
 }
 
-.dashboard-hero {
-  display: grid;
-  grid-template-columns: minmax(320px, 1.2fr) minmax(280px, 0.8fr);
-  gap: 24px;
-  align-items: stretch;
-  margin-bottom: 28px;
-}
-
-.dashboard-hero-copy {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(120, 150, 255, 0.18);
-  border-radius: 24px;
-  padding: 28px;
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.22);
-}
-
-.dashboard-eyebrow {
-  margin: 0 0 8px 0;
-  font-size: 0.95rem;
-  color: var(--muted-text, #9fb0c8);
-  font-weight: 600;
-}
-
-.dashboard-hero-copy h1 {
-  margin: 0 0 10px 0;
-  font-size: clamp(2rem, 4vw, 3.2rem);
-  line-height: 1.05;
-  font-weight: 900;
-}
-
-.dashboard-subtitle {
-  margin: 0;
-  font-size: 1.15rem;
-  color: var(--muted-text, #9fb0c8);
-}
-
-.dashboard-error {
-  margin-top: 14px;
-  color: #ff8e8e;
-  font-weight: 700;
-}
-
-.dashboard-hero-art {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(120, 150, 255, 0.18);
-  border-radius: 24px;
-  padding: 18px;
+.aura-header {
   display: flex;
-  align-items: center;
   justify-content: center;
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.22);
-}
-
-.dashboard-hero-art img {
-  width: 100%;
-  max-height: 420px;
-  object-fit: contain;
-  display: block;
-}
-
-.dashboard-section {
-  margin-top: 24px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(120, 150, 255, 0.18);
-  border-radius: 24px;
-  padding: 24px;
-  box-shadow: 0 0 40px rgba(0, 0, 0, 0.18);
-}
-
-.section-heading {
   margin-bottom: 18px;
 }
 
-.section-heading h2 {
+.aura-panel {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 22px;
+  border-radius: 18px;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--shadow);
+}
+
+.aura-img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.aura-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+}
+
+.aura-title {
   margin: 0;
-  font-size: 2rem;
-  font-weight: 900;
+  font-size: 28px;
 }
 
-.section-heading p {
-  margin: 6px 0 0 0;
-  color: var(--muted-text, #9fb0c8);
-  font-size: 1rem;
+.aura-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted-text);
 }
 
+.dashboard-section {
+  max-width: 1200px;
+  margin: 0 auto 18px auto;
+}
+
+.dashboard-cards {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Section header inside cards */
+.dash-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dash-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.dash-subtitle {
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+/* Filometrics grid */
 .filo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.filo-card {
-  border-radius: 20px;
-  padding: 18px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(120, 150, 255, 0.12);
+@media (max-width: 1100px) {
+  .filo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 650px) {
+  .filo-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.filo-item {
+  background: var(--bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--card-radius);
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+
+.filo-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .filo-label {
-  margin: 0 0 10px 0;
-  font-size: 1rem;
-  color: var(--muted-text, #9fb0c8);
-  font-weight: 600;
+  font-size: 13px;
+  color: var(--muted-text);
+}
+
+.filo-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
 }
 
 .filo-value {
-  margin: 0;
-  font-size: 2rem;
-  font-weight: 900;
-  line-height: 1.1;
+  margin-top: 8px;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
 }
 
 .filo-sub {
-  margin: 8px 0 0 0;
-  color: var(--muted-text, #9fb0c8);
-  font-size: 0.98rem;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted-text);
 }
 
-.health-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 18px;
-}
-
-.health-card {
-  border-radius: 20px;
-  padding: 18px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(120, 150, 255, 0.12);
-}
-
-.health-card-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.health-card-top p {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--muted-text, #9fb0c8);
-  font-weight: 700;
-}
-
-.health-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  display: inline-block;
-}
-
-.health-card h3 {
-  margin: 0;
-  font-size: 1.8rem;
-  font-weight: 900;
-}
-
-.health-card p:last-child {
-  margin: 8px 0 0 0;
-  color: var(--muted-text, #9fb0c8);
-}
-
-@media (max-width: 980px) {
-  .dashboard-hero {
-    grid-template-columns: 1fr;
-  }
-
-  .dashboard-shell {
-    padding: 16px;
-  }
-
-  .dashboard-section,
-  .dashboard-hero-copy,
-  .dashboard-hero-art {
-    padding: 18px;
-  }
+.dash-error {
+  max-width: 1200px;
+  margin: 0 auto 18px auto;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff4f4;
+  border: 1px solid #f0caca;
+  color: #8a1f1f;
+  font-size: 14px;
 }
