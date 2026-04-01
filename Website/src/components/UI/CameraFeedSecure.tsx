@@ -108,50 +108,123 @@ export default function CameraFeedSecure() {
     );
   }
 
+  const buttonBaseStyle: React.CSSProperties = {
+    padding: "10px 16px",
+    borderRadius: "12px",
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.04)",
+    color: "var(--text-primary, #fff)",
+    fontWeight: 700,
+    fontSize: "0.95rem",
+    cursor: busy ? "not-allowed" : "pointer",
+    transition: "all 0.18s ease",
+    minWidth: "96px",
+    backdropFilter: "blur(6px)",
+  };
+
+  const activeButtonStyle: React.CSSProperties = {
+    background: "linear-gradient(135deg, rgba(99,102,241,0.95), rgba(139,92,246,0.95))",
+    border: "1px solid rgba(139,92,246,0.95)",
+    color: "#fff",
+    boxShadow: "0 0 0 1px rgba(139,92,246,0.15), 0 8px 24px rgba(99,102,241,0.28)",
+  };
+
+  const inactiveButtonStyle: React.CSSProperties = {
+    opacity: busy ? 0.6 : 0.92,
+  };
+
   return (
     <div className="cam-card">
-      {/* HEADER */}
       <div
         className="cam-card-header"
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
-          gap: 12,
+          alignItems: "flex-start",
+          gap: 18,
           flexWrap: "wrap",
+          paddingBottom: 12,
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          marginBottom: 14,
         }}
       >
-        {/* LEFT */}
-        <div style={{ display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div className="cam-title">Live Camera Feed</div>
-          <div className={`cam-status ${ok ? "good" : "bad"}`}>
+          <div
+            className={`cam-status ${ok ? "good" : "bad"}`}
+            style={{
+              fontWeight: 700,
+              fontSize: "0.95rem",
+            }}
+          >
             {ok ? "● Live" : "● Waiting"}
           </div>
         </div>
 
-        {/* RIGHT (BUTTONS) */}
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => setCameraMode("raw")} disabled={busy || mode === "raw"}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "center",
+            justifyContent: "flex-end",
+            flexWrap: "wrap",
+          }}
+        >
+          <button
+            onClick={() => setCameraMode("raw")}
+            disabled={busy}
+            style={{
+              ...buttonBaseStyle,
+              ...(mode === "raw" ? activeButtonStyle : inactiveButtonStyle),
+            }}
+          >
             Raw
           </button>
 
-          <button onClick={() => setCameraMode("detection")} disabled={busy || mode === "detection"}>
+          <button
+            onClick={() => setCameraMode("detection")}
+            disabled={busy}
+            style={{
+              ...buttonBaseStyle,
+              ...(mode === "detection" ? activeButtonStyle : inactiveButtonStyle),
+            }}
+          >
             Detection
           </button>
 
-          <button onClick={() => setStreamNonce((n) => n + 1)} disabled={busy}>
+          <button
+            onClick={() => setStreamNonce((n) => n + 1)}
+            disabled={busy}
+            style={{
+              ...buttonBaseStyle,
+              ...inactiveButtonStyle,
+            }}
+          >
             Refresh
           </button>
         </div>
       </div>
 
-      {/* STATUS TEXT */}
-      <div className="cam-substatus" style={{ marginBottom: 10 }}>
+      <div
+        className="cam-substatus"
+        style={{
+          marginBottom: 12,
+          fontSize: "1rem",
+          fontWeight: 500,
+          opacity: 0.92,
+        }}
+      >
         {statusText}
       </div>
 
-      {/* VIDEO */}
-      <div className="cam-frame" style={{ position: "relative" }}>
+      <div
+        className="cam-frame"
+        style={{
+          position: "relative",
+          overflow: "hidden",
+          borderRadius: 22,
+        }}
+      >
         <img
           key={streamSrc}
           className="cam-img"
