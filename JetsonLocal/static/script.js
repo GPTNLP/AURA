@@ -92,18 +92,29 @@ function handleMessage(data) {
     if (!data || typeof data !== "object") return;
 
     if (data.type === "status") {
-        const text = String(data.data || "Ready");
-
-        let stateClass = "ready";
-        if (text.toLowerCase().includes("processing")) stateClass = "processing";
-        else if (text.toLowerCase().includes("offline")) stateClass = "offline";
-
-        updateStatus(text, stateClass);
+        // ... (Keep your existing status code here) ...
         return;
     }
 
     if (data.type === "chat") {
         appendMessage(data.sender, data.text);
+        
+        // --- ADD THIS NEW TTS BLOCK ---
+        if (data.sender === "ai") {
+            // Cancel any current speech so it doesn't overlap
+            window.speechSynthesis.cancel();
+            
+            // Create a new speech utterance
+            const speech = new SpeechSynthesisUtterance(data.text);
+            
+            // Optional: Make it sound more robotic/AI-like
+            speech.rate = 1.0; 
+            speech.pitch = 1.1; 
+            
+            // Speak the text out loud
+            window.speechSynthesis.speak(speech);
+        }
+        // ------------------------------
         return;
     }
 
