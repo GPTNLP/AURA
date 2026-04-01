@@ -13,6 +13,7 @@ MODEL_PATH = BASE_DIR / "models" / "component_best.pt"
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -53,6 +54,8 @@ def argus_pipeline(
 =======
 =======
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
+=======
+>>>>>>> parent of ff1c4d5 (fixing camera issue)
 def gstreamer_pipeline(
     sensor_id: int = 0,
     capture_width: int = 1280,
@@ -69,6 +72,9 @@ def gstreamer_pipeline(
         f"nvvidconv flip-method={flip_method} ! "
         f"video/x-raw, width=(int){display_width}, height=(int){display_height}, format=(string)BGRx ! "
 <<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> parent of ff1c4d5 (fixing camera issue)
+=======
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
 =======
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
@@ -121,7 +127,10 @@ class CameraService:
         self.consecutive_failures = 0
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
         self.capture_backend = "none"
+=======
+>>>>>>> parent of ff1c4d5 (fixing camera issue)
 =======
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
 =======
@@ -142,6 +151,7 @@ class CameraService:
         else:
             self.last_error = f"Model not found: {MODEL_PATH}"
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
     def _read_probe_frame(
@@ -172,6 +182,8 @@ class CameraService:
 =======
 =======
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
+=======
+>>>>>>> parent of ff1c4d5 (fixing camera issue)
     def _open_camera(self) -> cv2.VideoCapture:
         pipeline = gstreamer_pipeline(
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
@@ -183,6 +195,7 @@ class CameraService:
         )
         cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         if not cap.isOpened():
+<<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
             raise RuntimeError("Could not open Argus camera pipeline.")
@@ -206,6 +219,9 @@ class CameraService:
         cap = self._open_argus_camera()
         self.capture_backend = "argus"
         self.last_error = None
+=======
+            raise RuntimeError("Could not open Jetson CSI camera.")
+>>>>>>> parent of ff1c4d5 (fixing camera issue)
 =======
             raise RuntimeError("Could not open Jetson CSI camera.")
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
@@ -380,6 +396,7 @@ class CameraService:
                     self.consecutive_failures += 1
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
                     self.last_error = (
                         f"Failed to read frame ({self.consecutive_failures}) "
                         f"on backend={self.capture_backend}"
@@ -391,6 +408,13 @@ class CameraService:
                             f"Camera read timeout on backend={self.capture_backend}, "
                             f"restarting camera"
                         )
+=======
+                    self.last_error = f"Failed to read frame ({self.consecutive_failures})"
+                    time.sleep(0.05)
+
+                    if self.consecutive_failures >= 10:
+                        self.last_error = "Camera read timeout, restarting pipeline"
+>>>>>>> parent of ff1c4d5 (fixing camera issue)
 =======
                     self.last_error = f"Failed to read frame ({self.consecutive_failures})"
                     time.sleep(0.05)
@@ -472,10 +496,13 @@ class CameraService:
                 "idle_timeout_seconds": self.idle_timeout_seconds,
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
                 "capture_backend": self.capture_backend,
                 "camera_backend_requested": self.camera_backend,
                 "sensor_id": self.sensor_id,
                 "flip_method": self.flip_method,
+=======
+>>>>>>> parent of ff1c4d5 (fixing camera issue)
 =======
 >>>>>>> parent of ff1c4d5 (fixing camera issue)
 =======
