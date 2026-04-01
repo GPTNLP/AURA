@@ -12,6 +12,54 @@ import sounddevice as sd
 from faster_whisper import WhisperModel
 
 
+WAKE_PHRASES = [
+    "hey aura",
+    "hi aura",
+    "okay aura",
+    "ok aura",
+    "yo aura",
+    "hey ora",
+    "hey arua",
+]
+
+MOVEMENT_PATTERNS = {
+    "forward": [
+        "move forward",
+        "go forward",
+        "forward",
+    ],
+    "backward": [
+        "move backward",
+        "go backward",
+        "move back",
+        "go back",
+        "backward",
+        "back",
+    ],
+    "left": [
+        "go to the left",
+        "move to the left",
+        "turn left",
+        "go left",
+        "move left",
+        "left",
+    ],
+    "right": [
+        "go to the right",
+        "move to the right",
+        "turn right",
+        "go right",
+        "move right",
+        "right",
+    ],
+    "stop": [
+        "stop moving",
+        "stop",
+        "halt",
+        "pause",
+    ],
+}
+
 BAD_WORD_PATTERNS = [
     r"fuck\w*",
     r"shit\w*",
@@ -20,21 +68,12 @@ BAD_WORD_PATTERNS = [
     r"asshole\w*",
 ]
 
-WAKE_PHRASES = [
-    "hey aura",
-    "hi aura",
-    "okay aura",
-    "ok aura",
-    "yo aura",
-]
 
-COMMAND_MAP = {
-    "forward": ["forward", "go forward", "move forward"],
-    "backward": ["backward", "go backward", "move backward", "go back", "move back"],
-    "left": ["left", "turn left", "go left", "move left"],
-    "right": ["right", "turn right", "go right", "move right"],
-    "stop": ["stop", "halt", "pause"],
-}
+def normalize_text(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def censor_text(text: str) -> str:
@@ -54,21 +93,39 @@ def contains_bad_language(text: str) -> bool:
     return False
 
 
-def detect_command(text: str):
-    text = text.lower()
-    for command, phrases in COMMAND_MAP.items():
-        for phrase in phrases:
-            if phrase in text:
-                return command
-    return None
-
-
 def contains_wake_phrase(text: str) -> bool:
-    text = text.lower()
+    norm = normalize_text(text)
     for phrase in WAKE_PHRASES:
-        if phrase in text:
+        if normalize_text(phrase) in norm:
             return True
     return False
+
+
+def remove_wake_phrase(text: str) -> str:
+    norm = normalize_text(text)
+    for phrase in WAKE_PHRASES:
+        phrase_norm = normalize_text(phrase)
+        norm = re.sub(rf"\b{re.escape(phrase_norm)}\b", " ", norm)
+    norm = re.sub(r"\s+", " ", norm).strip()
+    return norm
+
+
+def detect_last_movement_command(text: str):
+    norm = normalize_text(text)
+
+    matches = []
+    for command, phrases in MOVEMENT_PATTERNS.items():
+        for phrase in phrases:
+            phrase_norm = normalize_text(phrase)
+            pattern = rf"\b{re.escape(phrase_norm)}\b"
+            for match in re.finditer(pattern, norm):
+                matches.append((match.start(), command, phrase_norm))
+
+    if not matches:
+        return None
+
+    matches.sort(key=lambda x: x[0])
+    return matches[-1][1]
 
 
 class SpeechToText:
@@ -161,12 +218,10 @@ class SpeechToText:
         sd.wait()
         return audio
 
-    def listen_for_wake_word(self, chunk_seconds: float = 2.0) -> bool:
+    def listen_for_wake_word(self, chunk_seconds: float = 1.8) -> bool:
         audio = self.record_fixed(chunk_seconds)
 
         peak = float(np.max(np.abs(audio)))
-        mean = float(np.mean(np.abs(audio)))
-
         if peak < self.silence_threshold:
             return False
 
@@ -177,19 +232,19 @@ class SpeechToText:
         print(f"[WAKE CHECK] {text}")
 
         if contains_wake_phrase(text):
-            print("[WAKE] Wake phrase detected.")
             return True
 
         return False
 
-    def listen_for_command(self, timeout_seconds: float = 10.0, min_speech_seconds: float = 0.8):
-        print("[COMMAND] Listening for command...")
+    def listen_until_done(self, timeout_seconds: float = 10.0, end_silence_seconds: float = 1.2) -> str:
+        print("[AURA] Listening...")
 
         start_time = time.time()
+        chunk_seconds = 0.4
         collected = []
+
         speech_started = False
         silence_after_speech = 0.0
-        chunk_seconds = 0.5
 
         while time.time() - start_time < timeout_seconds:
             audio = self.record_fixed(chunk_seconds)
@@ -204,30 +259,46 @@ class SpeechToText:
                 if speech_started:
                     silence_after_speech += chunk_seconds
 
-            elapsed = time.time() - start_time
-
-            if speech_started and elapsed >= min_speech_seconds and silence_after_speech >= 1.2:
+            if speech_started and silence_after_speech >= end_silence_seconds:
                 break
 
-        full_audio = np.concatenate(collected, axis=0) if collected else np.array([], dtype=np.float32)
-        peak = float(np.max(np.abs(full_audio))) if len(full_audio) else 0.0
-        mean = float(np.mean(np.abs(full_audio))) if len(full_audio) else 0.0
-
-        print(f"[COMMAND] Peak level: {peak:.6f}")
-        print(f"[COMMAND] Mean level: {mean:.6f}")
-
-        if not speech_started:
-            print("[COMMAND] No speech detected before timeout.")
+        if not collected:
             return ""
 
-        text = self._transcribe_audio_array(full_audio)
-        return text
+        full_audio = np.concatenate(collected, axis=0)
+
+        peak = float(np.max(np.abs(full_audio)))
+        mean = float(np.mean(np.abs(full_audio)))
+        print(f"[AURA] Peak level: {peak:.6f}")
+        print(f"[AURA] Mean level: {mean:.6f}")
+
+        if not speech_started:
+            return ""
+
+        return self._transcribe_audio_array(full_audio)
 
     def log_transcript(self, text: str) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         os.makedirs(os.path.dirname(self.log_path), exist_ok=True)
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(f"[{timestamp}] {text}\n")
+
+
+def handle_user_text(text: str):
+    cleaned = remove_wake_phrase(text)
+    command = detect_last_movement_command(cleaned)
+
+    print("\n" + "=" * 60)
+    print(f"RAW TEXT: {text}")
+    print(f"CLEANED TEXT: {cleaned}")
+
+    if command:
+        print(f"COMMAND: {command}")
+        print("ACTION TYPE: MOVEMENT")
+    else:
+        print(f"LLM QUERY: {cleaned if cleaned else text}")
+        print("ACTION TYPE: LLM")
+    print("=" * 60)
 
 
 def main():
@@ -248,43 +319,37 @@ def main():
     print(sd.query_devices(stt.input_device))
     print()
     print("=" * 60)
-    print(" AURA WAKE WORD MODE")
+    print(" AURA VOICE MODE")
     print("=" * 60)
-    print("Say 'Hey AURA' to wake it up.")
-    print("After that, it will listen for a command.")
-    print("If nothing is heard for 10 seconds, it goes back to wake mode.")
+    print("Say 'Hey AURA' to activate.")
+    print("Then it will listen for up to 10 seconds.")
+    print("If you start speaking, it will stay active until you finish.")
+    print("If no speech is heard, it returns to wake mode.")
     print("Press Ctrl+C to exit.")
     print("-" * 60)
 
     try:
         while True:
-            woke = stt.listen_for_wake_word(chunk_seconds=2.0)
+            woke = stt.listen_for_wake_word(chunk_seconds=1.8)
             if not woke:
                 continue
 
-            print("[AURA] Yes? Listening...")
-            command_text = stt.listen_for_command(timeout_seconds=10.0)
+            print("[AURA] Wake word detected.")
 
-            if not command_text:
-                print("[AURA] No command heard. Returning to wake mode.")
+            text = stt.listen_until_done(timeout_seconds=10.0, end_silence_seconds=1.2)
+
+            if not text:
+                print("[AURA] No speech heard. Returning to wake mode.")
                 print("-" * 60)
                 continue
 
-            censored_text = censor_text(command_text)
-            bad = contains_bad_language(command_text)
-            detected_command = detect_command(command_text)
+            censored = censor_text(text)
+            stt.log_transcript(censored)
 
-            print("\n" + "=" * 60)
-            print(" COMMAND TRANSCRIPT:")
-            print(f" '{censored_text}'")
-            print(f" COMMAND DETECTED: {detected_command if detected_command else 'None'}")
-            print("=" * 60)
+            if contains_bad_language(text):
+                print("[AURA] Warning: inappropriate language detected.")
 
-            stt.log_transcript(censored_text)
-
-            if bad:
-                print("[STT] Inappropriate language detected.")
-
+            handle_user_text(text)
             print("[AURA] Returning to wake mode.")
             print("-" * 60)
 
