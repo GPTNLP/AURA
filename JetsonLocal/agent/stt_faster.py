@@ -2,6 +2,7 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import re
+import time
 import wave
 import tempfile
 from datetime import datetime
@@ -9,7 +10,6 @@ from datetime import datetime
 import numpy as np
 import sounddevice as sd
 from faster_whisper import WhisperModel
-from pynput import keyboard
 
 
 BAD_WORD_PATTERNS = [
@@ -19,6 +19,23 @@ BAD_WORD_PATTERNS = [
     r"ass",
     r"asshole\w*",
 ]
+
+WAKE_PHRASES = [
+    "hey aura",
+    "hi aura",
+    "okay aura",
+    "ok aura",
+    "yo aura",
+]
+
+COMMAND_MAP = {
+    "forward": ["forward", "go forward", "move forward"],
+    "backward": ["backward", "go backward", "move backward", "go back", "move back"],
+    "left": ["left", "turn left", "go left", "move left"],
+    "right": ["right", "turn right", "go right", "move right"],
+    "stop": ["stop", "halt", "pause"],
+}
+
 
 def censor_text(text: str) -> str:
     for pattern in BAD_WORD_PATTERNS:
@@ -37,6 +54,23 @@ def contains_bad_language(text: str) -> bool:
     return False
 
 
+def detect_command(text: str):
+    text = text.lower()
+    for command, phrases in COMMAND_MAP.items():
+        for phrase in phrases:
+            if phrase in text:
+                return command
+    return None
+
+
+def contains_wake_phrase(text: str) -> bool:
+    text = text.lower()
+    for phrase in WAKE_PHRASES:
+        if phrase in text:
+            return True
+    return False
+
+
 class SpeechToText:
     def __init__(
         self,
@@ -50,6 +84,7 @@ class SpeechToText:
         language: str = "en",
         task: str = "transcribe",
         log_path: str = "~/SDP/AURA/JetsonLocal/storage/transcriptions.log",
+        silence_threshold: float = 0.015,
     ):
         print(f"[STT] Loading faster-whisper model '{model_size}'...")
         self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
@@ -62,16 +97,7 @@ class SpeechToText:
         self.language = language
         self.task = task
         self.log_path = os.path.expanduser(log_path)
-
-        self.is_recording = False
-        self.recording = []
-        self.stream = None
-
-    def _callback(self, indata, frames, time_info, status):
-        if status:
-            print(f"[STT] Audio status: {status}")
-        if self.is_recording:
-            self.recording.append(indata.copy())
+        self.silence_threshold = silence_threshold
 
     def _resample_audio(self, audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
         if orig_sr == target_sr:
@@ -97,47 +123,9 @@ class SpeechToText:
             wf.setframerate(sample_rate)
             wf.writeframes(audio_int16.tobytes())
 
-    def start_recording(self) -> None:
-        if self.is_recording:
-            print("[STT] Already recording...")
-            return
-
-        print("\n[STT] Recording started... (Press SPACE again to stop)")
-        self.is_recording = True
-        self.recording = []
-
-        self.stream = sd.InputStream(
-            samplerate=self.device_sample_rate,
-            channels=self.channels,
-            dtype="float32",
-            device=self.input_device,
-            callback=self._callback,
-        )
-        self.stream.start()
-
-    def stop_recording(self) -> str | None:
-        if not self.is_recording:
-            print("[STT] Not currently recording...")
-            return None
-
-        print("[STT] Recording stopped. Processing...")
-        self.is_recording = False
-
-        if self.stream:
-            self.stream.stop()
-            self.stream.close()
-            self.stream = None
-
-        if not self.recording:
-            print("[STT] No audio captured.")
-            return None
-
-        audio = np.concatenate(self.recording, axis=0)
-
-        peak = float(np.max(np.abs(audio)))
-        mean = float(np.mean(np.abs(audio)))
-        print(f"[STT] Peak level: {peak:.6f}")
-        print(f"[STT] Mean level: {mean:.6f}")
+    def _transcribe_audio_array(self, audio: np.ndarray) -> str:
+        if audio is None or len(audio) == 0:
+            return ""
 
         audio_16k = self._resample_audio(audio, self.device_sample_rate, self.target_sample_rate)
 
@@ -147,7 +135,6 @@ class SpeechToText:
         try:
             self._save_wav(temp_filename, audio_16k, self.target_sample_rate)
 
-            print("[STT] Transcribing with faster-whisper...")
             segments, info = self.model.transcribe(
                 temp_filename,
                 task=self.task,
@@ -157,19 +144,13 @@ class SpeechToText:
             )
 
             text = " ".join(seg.text.strip() for seg in segments).strip()
-            detected_lang = getattr(info, "language", None) or "unknown"
-
-            print(f"[STT] Detected language: {detected_lang.upper()}")
-            print(f"[STT] Output: {text}")
-
             return text
 
         finally:
             if os.path.exists(temp_filename):
                 os.unlink(temp_filename)
 
-    def listen_once(self, seconds: int = 6) -> str:
-        print(f"[STT] Recording for {seconds} seconds...")
+    def record_fixed(self, seconds: float) -> np.ndarray:
         audio = sd.rec(
             int(seconds * self.device_sample_rate),
             samplerate=self.device_sample_rate,
@@ -178,33 +159,69 @@ class SpeechToText:
             device=self.input_device,
         )
         sd.wait()
+        return audio
+
+    def listen_for_wake_word(self, chunk_seconds: float = 2.0) -> bool:
+        audio = self.record_fixed(chunk_seconds)
 
         peak = float(np.max(np.abs(audio)))
         mean = float(np.mean(np.abs(audio)))
-        print(f"[STT] Peak level: {peak:.6f}")
-        print(f"[STT] Mean level: {mean:.6f}")
 
-        audio_16k = self._resample_audio(audio, self.device_sample_rate, self.target_sample_rate)
+        if peak < self.silence_threshold:
+            return False
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-            temp_filename = tmp_file.name
+        text = self._transcribe_audio_array(audio)
+        if not text:
+            return False
 
-        try:
-            self._save_wav(temp_filename, audio_16k, self.target_sample_rate)
+        print(f"[WAKE CHECK] {text}")
 
-            segments, info = self.model.transcribe(
-                temp_filename,
-                task=self.task,
-                language=self.language,
-                vad_filter=True,
-                beam_size=5,
-            )
+        if contains_wake_phrase(text):
+            print("[WAKE] Wake phrase detected.")
+            return True
 
-            return " ".join(seg.text.strip() for seg in segments).strip()
+        return False
 
-        finally:
-            if os.path.exists(temp_filename):
-                os.unlink(temp_filename)
+    def listen_for_command(self, timeout_seconds: float = 10.0, min_speech_seconds: float = 0.8):
+        print("[COMMAND] Listening for command...")
+
+        start_time = time.time()
+        collected = []
+        speech_started = False
+        silence_after_speech = 0.0
+        chunk_seconds = 0.5
+
+        while time.time() - start_time < timeout_seconds:
+            audio = self.record_fixed(chunk_seconds)
+            collected.append(audio)
+
+            level = float(np.mean(np.abs(audio)))
+
+            if level > self.silence_threshold:
+                speech_started = True
+                silence_after_speech = 0.0
+            else:
+                if speech_started:
+                    silence_after_speech += chunk_seconds
+
+            elapsed = time.time() - start_time
+
+            if speech_started and elapsed >= min_speech_seconds and silence_after_speech >= 1.2:
+                break
+
+        full_audio = np.concatenate(collected, axis=0) if collected else np.array([], dtype=np.float32)
+        peak = float(np.max(np.abs(full_audio))) if len(full_audio) else 0.0
+        mean = float(np.mean(np.abs(full_audio))) if len(full_audio) else 0.0
+
+        print(f"[COMMAND] Peak level: {peak:.6f}")
+        print(f"[COMMAND] Mean level: {mean:.6f}")
+
+        if not speech_started:
+            print("[COMMAND] No speech detected before timeout.")
+            return ""
+
+        text = self._transcribe_audio_array(full_audio)
+        return text
 
     def log_transcript(self, text: str) -> None:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -214,13 +231,6 @@ class SpeechToText:
 
 
 def main():
-    print("=" * 60)
-    print(" JETSON STT TEST")
-    print("=" * 60)
-    print("\nInstructions:")
-    print(" • Press SPACE to start/stop recording")
-    print(" • Press ESC to exit the program\n")
-
     stt = SpeechToText(
         model_size="base",
         input_device=4,
@@ -231,49 +241,55 @@ def main():
         compute_type="int8",
         language="en",
         task="transcribe",
+        silence_threshold=0.015,
     )
 
     print("[STT] Device info:")
     print(sd.query_devices(stt.input_device))
-    print("\n[STT] Ready! Press SPACE to start recording...\n")
+    print()
+    print("=" * 60)
+    print(" AURA WAKE WORD MODE")
+    print("=" * 60)
+    print("Say 'Hey AURA' to wake it up.")
+    print("After that, it will listen for a command.")
+    print("If nothing is heard for 10 seconds, it goes back to wake mode.")
+    print("Press Ctrl+C to exit.")
     print("-" * 60)
 
-    def on_press(key):
-        nonlocal stt
+    try:
+        while True:
+            woke = stt.listen_for_wake_word(chunk_seconds=2.0)
+            if not woke:
+                continue
 
-        try:
-            if key == keyboard.Key.space:
-                if not stt.is_recording:
-                    stt.start_recording()
-                else:
-                    text = stt.stop_recording()
-                    if text:
-                        censored_text = censor_text(text)
-                        bad = contains_bad_language(text)
+            print("[AURA] Yes? Listening...")
+            command_text = stt.listen_for_command(timeout_seconds=10.0)
 
-                        print("\n" + "=" * 60)
-                        print(" FINAL OUTPUT:")
-                        print(f" '{censored_text}'")
-                        print("=" * 60)
+            if not command_text:
+                print("[AURA] No command heard. Returning to wake mode.")
+                print("-" * 60)
+                continue
 
-                        stt.log_transcript(censored_text)
+            censored_text = censor_text(command_text)
+            bad = contains_bad_language(command_text)
+            detected_command = detect_command(command_text)
 
-                        if bad:
-                            print("[STT] Inappropriate language detected.")
+            print("\n" + "=" * 60)
+            print(" COMMAND TRANSCRIPT:")
+            print(f" '{censored_text}'")
+            print(f" COMMAND DETECTED: {detected_command if detected_command else 'None'}")
+            print("=" * 60)
 
-                    print("\n[STT] Ready for next recording (SPACE to start)...")
+            stt.log_transcript(censored_text)
 
-            elif key == keyboard.Key.esc:
-                print("\n[STT] Exiting program...")
-                return False
+            if bad:
+                print("[STT] Inappropriate language detected.")
 
-        except AttributeError:
-            if key == keyboard.Key.esc:
-                print("\n[STT] Exiting program...")
-                return False
+            print("[AURA] Returning to wake mode.")
+            print("-" * 60)
 
-    with keyboard.Listener(on_press=on_press) as listener:
-        listener.join()
+    except KeyboardInterrupt:
+        print("\n[STT] Exiting cleanly.")
 
 
 if __name__ == "__main__":
