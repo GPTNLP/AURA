@@ -46,7 +46,9 @@ def argus_pipeline(
         f"width=(int){width}, height=(int){height}, "
         f"format=(string)NV12, framerate=(fraction){fps}/1 ! "
         f"nvvidconv flip-method={flip_method} ! "
-        f"video/x-raw, width=(int){width}, height=(int){height}, format=(string)BGRx ! "
+        f"video/x-raw, "
+        f"width=(int){width}, height=(int){height}, "
+        f"format=(string)BGRx ! "
         f"videoconvert ! "
         f"video/x-raw, format=(string)BGR ! "
         f"appsink drop=true max-buffers=1 sync=false"
@@ -76,9 +78,7 @@ class CameraService:
         self.infer_size = infer_size
         self.idle_timeout_seconds = idle_timeout_seconds
 
-        self.camera_backend = _env_str("CAMERA_BACKEND", "auto").lower()
-        self.camera_device = _env_str("CAMERA_DEVICE", "/dev/video0")
-        self.usb_index = _env_int("CAMERA_USB_INDEX", 0)
+        self.camera_backend = _env_str("CAMERA_BACKEND", "argus").lower()
 
         self.cap: Optional[cv2.VideoCapture] = None
         self.thread: Optional[threading.Thread] = None
@@ -118,23 +118,28 @@ class CameraService:
         else:
             self.last_error = f"Model not found: {MODEL_PATH}"
 
-    def _read_probe_frame(self, cap: cv2.VideoCapture, tries: int = 30, delay_s: float = 0.10):
+    def _read_probe_frame(
+        self,
+        cap: cv2.VideoCapture,
+        warmup_frames: int = 12,
+        tries: int = 30,
+        delay_s: float = 0.08,
+    ):
+        # Warm up the Argus pipeline first
+        for _ in range(warmup_frames):
+            try:
+                cap.read()
+            except Exception:
+                pass
+            time.sleep(delay_s)
+
         for _ in range(tries):
             ok, frame = cap.read()
             if ok and frame is not None and getattr(frame, "size", 0) > 0:
                 return frame
             time.sleep(delay_s)
-        return None
 
-    def _apply_capture_settings(self, cap: cv2.VideoCapture) -> None:
-        try:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            cap.set(cv2.CAP_PROP_FPS, self.fps)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-        except Exception:
-            pass
+        return None
 
     def _open_argus_camera(self) -> cv2.VideoCapture:
         pipeline = argus_pipeline(
@@ -152,68 +157,23 @@ class CameraService:
         frame = self._read_probe_frame(cap)
         if frame is None:
             cap.release()
-            raise RuntimeError("Argus pipeline opened but failed to read first frame.")
-
-        return cap
-
-    def _open_v4l2_path_camera(self) -> cv2.VideoCapture:
-        cap = cv2.VideoCapture(self.camera_device, cv2.CAP_V4L2)
-        if not cap.isOpened():
-            raise RuntimeError(f"Could not open V4L2 device path {self.camera_device}.")
-
-        self._apply_capture_settings(cap)
-
-        frame = self._read_probe_frame(cap)
-        if frame is None:
-            cap.release()
-            raise RuntimeError(f"V4L2 device path opened but failed to read first frame from {self.camera_device}.")
-
-        return cap
-
-    def _open_usb_index_camera(self) -> cv2.VideoCapture:
-        cap = cv2.VideoCapture(self.usb_index, cv2.CAP_V4L2)
-        if not cap.isOpened():
-            raise RuntimeError(f"Could not open V4L2 camera index {self.usb_index}.")
-
-        self._apply_capture_settings(cap)
-
-        frame = self._read_probe_frame(cap)
-        if frame is None:
-            cap.release()
-            raise RuntimeError(f"V4L2 camera index opened but failed to read first frame from index {self.usb_index}.")
+            raise RuntimeError(
+                "Argus pipeline opened but failed to read a usable frame after warmup."
+            )
 
         return cap
 
     def _open_camera(self) -> cv2.VideoCapture:
-        backend = self.camera_backend
-        errors = []
+        if self.camera_backend != "argus":
+            raise RuntimeError(
+                f"Unsupported CAMERA_BACKEND={self.camera_backend}. "
+                f"For this CSI camera, use CAMERA_BACKEND=argus."
+            )
 
-        if backend == "argus":
-            order = ["argus"]
-        elif backend == "v4l2":
-            order = ["v4l2_path"]
-        elif backend == "usb":
-            order = ["usb_index"]
-        else:
-            order = ["v4l2_path", "argus"]
-
-        for candidate in order:
-            try:
-                if candidate == "argus":
-                    cap = self._open_argus_camera()
-                elif candidate == "v4l2_path":
-                    cap = self._open_v4l2_path_camera()
-                else:
-                    cap = self._open_usb_index_camera()
-
-                self.capture_backend = candidate
-                self.last_error = None
-                return cap
-            except Exception as e:
-                errors.append(f"{candidate}: {e}")
-
-        self.capture_backend = "none"
-        raise RuntimeError(" | ".join(errors))
+        cap = self._open_argus_camera()
+        self.capture_backend = "argus"
+        self.last_error = None
+        return cap
 
     def _close_camera(self) -> None:
         if self.cap is not None:
@@ -381,11 +341,17 @@ class CameraService:
                 ret, frame = self.cap.read()
                 if not ret or frame is None:
                     self.consecutive_failures += 1
-                    self.last_error = f"Failed to read frame ({self.consecutive_failures}) on backend={self.capture_backend}"
+                    self.last_error = (
+                        f"Failed to read frame ({self.consecutive_failures}) "
+                        f"on backend={self.capture_backend}"
+                    )
                     time.sleep(0.05)
 
                     if self.consecutive_failures >= 10:
-                        self.last_error = f"Camera read timeout on backend={self.capture_backend}, restarting camera"
+                        self.last_error = (
+                            f"Camera read timeout on backend={self.capture_backend}, "
+                            f"restarting camera"
+                        )
                         self.restart_camera()
                     continue
 
@@ -453,8 +419,8 @@ class CameraService:
                 "idle_timeout_seconds": self.idle_timeout_seconds,
                 "capture_backend": self.capture_backend,
                 "camera_backend_requested": self.camera_backend,
-                "camera_device": self.camera_device,
-                "usb_index": self.usb_index,
+                "sensor_id": self.sensor_id,
+                "flip_method": self.flip_method,
             }
 
 
