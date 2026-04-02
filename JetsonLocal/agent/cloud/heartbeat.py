@@ -1,13 +1,13 @@
 from typing import Dict, Any
 
-from JetsonLocal.agent.core.config import (
+from core.config import (
     DEVICE_ID,
     DEVICE_SOFTWARE_VERSION,
     OLLAMA_READY_DEFAULT,
     VECTOR_DB_READY_DEFAULT,
 )
 from device_info import collect_device_info
-from JetsonLocal.agent.hardware.camera import get_camera_status
+from hardware.camera import get_camera_status
 
 
 def build_heartbeat_payload() -> Dict[str, Any]:

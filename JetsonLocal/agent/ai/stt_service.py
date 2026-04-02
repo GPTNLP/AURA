@@ -1,7 +1,11 @@
+import os
 import asyncio
 import numpy as np
 import pyaudio
 from faster_whisper import WhisperModel
+
+# Prevent MKL library conflicts on Windows
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 class STTService:
     def __init__(self, callback):
@@ -9,9 +13,14 @@ class STTService:
         self.is_running = False
 
     async def continuous_stt_loop(self):
-        print("[STT] Loading faster-whisper base.en model...")
-        model = WhisperModel("base.en", device="cpu", compute_type="int8") # Use "cuda" if CuDNN/TensorRT is available
-        
+        print("[STT] Loading faster-whisper tiny.en model...")
+        try:
+            # Switched to tiny.en and limited threads to prevent mkl_malloc crash
+            model = WhisperModel("tiny.en", device="cpu", compute_type="int8", cpu_threads=4)
+        except Exception as e:
+            print(f"[STT] Failed to load Whisper: {e}")
+            return
+            
         audio_format = pyaudio.paInt16
         channels = 1
         rate = 16000
@@ -25,7 +34,6 @@ class STTService:
             
             while self.is_running:
                 frames = []
-                # Buffer 3 seconds of audio
                 for _ in range(0, int(rate / chunk * 3)):
                     data = stream.read(chunk, exception_on_overflow=False)
                     frames.append(np.frombuffer(data, dtype=np.int16))

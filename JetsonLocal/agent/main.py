@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
@@ -20,7 +21,17 @@ from ai.rag_manager import rag_manager
 from ai.intent_parser import parse_intent
 from ai.stt_service import STTService
 
-app = FastAPI(title="AURA Edge API (Jetson Orin Nano)")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup tasks
+    serial_link.connect()
+    rag_manager.initialize()
+    asyncio.create_task(command_loop())
+    asyncio.create_task(stt_service.continuous_stt_loop())
+    yield
+    # Shutdown tasks (if any) could go here
+    
+app = FastAPI(title="AURA Edge API (Jetson Orin Nano)", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 api = ApiClient()
 
@@ -94,14 +105,6 @@ async def command_loop():
             print(f"[COMMAND] poll failed: {e}")
             
         await asyncio.sleep(0.5)
-
-@app.on_event("startup")
-async def startup_event():
-    serial_link.connect()
-    rag_manager.initialize()
-    
-    asyncio.create_task(command_loop())
-    asyncio.create_task(stt_service.continuous_stt_loop())
 
 @app.get("/")
 async def serve_ui():

@@ -1,9 +1,9 @@
 from typing import Dict, Any
 
-from JetsonLocal.agent.core.config import DEVICE_ID, OLLAMA_READY_DEFAULT, VECTOR_DB_READY_DEFAULT, LOCAL_DB_NAME
+from core.config import DEVICE_ID, OLLAMA_READY_DEFAULT, VECTOR_DB_READY_DEFAULT, LOCAL_DB_NAME
 from device_info import collect_device_info
 from battery import read_battery_status
-from JetsonLocal.agent.hardware.camera import get_camera_status
+from hardware.camera import get_camera_status
 
 
 def build_status_payload() -> Dict[str, Any]:
