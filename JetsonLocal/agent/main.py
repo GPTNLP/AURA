@@ -351,7 +351,7 @@ def upload_latest_frame_once():
     if signature == _last_uploaded_signature:
         return
 
-    url = f"{API_BASE_URL.rstrip('/')}/camera/device/camera/frame"
+    url = f"{API_BASE_URL.rstrip('/')}/device/camera/frame"
     headers = {
         "X-Device-Secret": DEVICE_SHARED_SECRET,
         "Content-Type": "image/jpeg",
