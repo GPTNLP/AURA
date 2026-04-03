@@ -1,83 +1,83 @@
-# ========================
+# ==========================================
+# 1. SECURITY & SECRETS (CRITICAL)
+# ==========================================
 # Environment variables
-# ========================
 .env
-*.env
+.env.*
+!.env.example
 
-# ========================
-# Node / Frontend
-# ========================
-node_modules/
-dist/
-.vite/
-npm-debug.log*
-
-# ========================
-# Python
-# ========================
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.venv/
-venv/
-env/
-
-# ========================
-# Backend Secrets & Runtime Data
-# ========================
+# Authentication & User Data
 backend/admin_users.json
 backend/ta_users.json
 admin_users.json
 ta_users.json
-chat_logs.jsonl
-*.sqlite
-*.jsonl
 
-# Ignore all dynamic storage/database files uploaded/created at runtime
-backend/storage/
-
-# ========================
-# OS / Editor junk
-# ========================
-.DS_Store
-.vscode/
-.idea/
-
-# ========================
-# Logs
-# ========================
-*.log
-
-# Python Cache
-__pycache__/
-*.py[cod]
-*$py.class
-
-# Environment Variables / Secrets
-.env
-.env.production
-.env.local
-
-# Machine Learning Models (Optional: remove if using Git LFS)
-*.pt
-*.pth
-*.onnx
-
-# Storage, Uploads, and Databases
+# ==========================================
+# 2. DYNAMIC STORAGE, DATABASES & BLOAT
+# ==========================================
+# Universal storage folders (covers backend/storage, JetsonLocal/storage, etc.)
 **/storage/
 **/databases/
 **/documents/
+
+# Relational Databases
+*.sqlite
 *.sqlite3
 *.db
+
+# LightRAG / Vector Embeddings (Heavy Bloat)
 *.npy
 *.index
 *.bin
 
-# Logs and Dynamic State
+# Machine Learning Models (Heavy Bloat)
+*.pt
+*.pth
+*.onnx
+
+# ==========================================
+# 3. LOGS, QUEUES & RUNTIME STATE
+# ==========================================
 **/logs/
 **/sessions/
 **/queue/
 *.log
 *.jsonl
+chat_logs.jsonl
 runtime.json
+
+# ==========================================
+# 4. PYTHON CACHE & ENVIRONMENTS
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# Virtual Environments
+.venv/
+venv/
+env/
+aura_env/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# ==========================================
+# 5. NODE.JS / FRONTEND
+# ==========================================
+node_modules/
+.vite/
+npm-debug.log*
+# Note: 'dist/' is already ignored in the Python section, which covers Node builds too.
+
+# ==========================================
+# 6. OS / EDITOR JUNK
+# ==========================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
