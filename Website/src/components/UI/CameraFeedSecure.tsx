@@ -8,6 +8,15 @@ const DEVICE_ID =
 
 type CameraMode = "raw" | "detection";
 
+type CameraMeta = {
+  ok?: boolean;
+  device_id?: string;
+  available?: boolean;
+  mode?: CameraMode;
+  updated_at?: number;
+  bytes?: number;
+};
+
 export default function CameraFeedSecure() {
   const { token } = useAuth();
 
@@ -15,9 +24,14 @@ export default function CameraFeedSecure() {
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<CameraMode>("raw");
   const [busy, setBusy] = useState(false);
-  const [frameNonce, setFrameNonce] = useState(0);
   const [displaySrc, setDisplaySrc] = useState("");
+  const [statusText, setStatusText] = useState("Starting camera...");
+  const [metaTick, setMetaTick] = useState(0);
+
+  const mountedRef = useRef(true);
   const preloadRef = useRef<HTMLImageElement | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
+  const metaTimerRef = useRef<number | null>(null);
 
   const base = (API_BASE || "").replace(/\/+$/, "");
 
@@ -25,18 +39,24 @@ export default function CameraFeedSecure() {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   });
 
-  const nextFrameSrc = useMemo(() => {
+  const frameSrc = useMemo(() => {
     if (!base) return "";
     return `${base}/camera/latest?device_id=${encodeURIComponent(
       DEVICE_ID
-    )}&mode=${encodeURIComponent(mode)}&n=${frameNonce}`;
-  }, [base, mode, frameNonce]);
+    )}&mode=${encodeURIComponent(mode)}&t=${Date.now()}`;
+  }, [base, mode, metaTick]);
+
+  const metaUrl = useMemo(() => {
+    if (!base) return "";
+    return `${base}/camera/latest/meta?device_id=${encodeURIComponent(DEVICE_ID)}`;
+  }, [base]);
 
   const activateCamera = async (newMode: CameraMode) => {
     if (!base) return;
 
     setBusy(true);
     setErr(null);
+    setStatusText(newMode === "raw" ? "Starting raw mode..." : "Starting detection...");
 
     try {
       const res = await fetch(
@@ -60,19 +80,15 @@ export default function CameraFeedSecure() {
       setOk(false);
       setErr(null);
       setDisplaySrc("");
-      setFrameNonce((n) => n + 1);
+      setStatusText(newMode === "raw" ? "Raw mode active" : "Detection mode active");
+      setMetaTick((n) => n + 1);
     } catch (e: any) {
       setErr(e?.message || "Failed to activate camera");
+      setStatusText("Camera start failed");
       setOk(false);
     } finally {
       setBusy(false);
     }
-  };
-
-  const setCameraMode = async (newMode: CameraMode) => {
-    if (busy) return;
-    if (mode === newMode) return;
-    await activateCamera(newMode);
   };
 
   const deactivateCamera = async () => {
@@ -87,63 +103,158 @@ export default function CameraFeedSecure() {
           method: "POST",
           credentials: "include",
           headers: authHeaders(),
+          keepalive: true,
         }
       );
     } catch {
       // ignore
     } finally {
+      if (!mountedRef.current) return;
       setOk(false);
+      setStatusText("Camera off");
     }
   };
 
+  const setCameraMode = async (newMode: CameraMode) => {
+    if (busy) return;
+    if (mode === newMode) return;
+    await activateCamera(newMode);
+  };
+
+  const loadNextFrame = (src: string) => {
+    if (!src) return;
+
+    const img = new Image();
+    preloadRef.current = img;
+
+    img.onload = () => {
+      if (!mountedRef.current) return;
+      if (preloadRef.current !== img) return;
+      setDisplaySrc(src);
+      setOk(true);
+      setErr(null);
+    };
+
+    img.onerror = () => {
+      if (!mountedRef.current) return;
+      if (preloadRef.current !== img) return;
+      setOk(false);
+      setErr("Stream unavailable");
+    };
+
+    img.src = src;
+  };
+
   useEffect(() => {
-    activateCamera("raw");
+    mountedRef.current = true;
+
+    const start = async () => {
+      await activateCamera("raw");
+    };
+
+    start();
+
+    const onPageHide = () => {
+      fetch(
+        `${base}/camera/control/deactivate?device_id=${encodeURIComponent(DEVICE_ID)}`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: authHeaders(),
+          keepalive: true,
+        }
+      ).catch(() => {});
+    };
+
+    window.addEventListener("pagehide", onPageHide);
 
     return () => {
+      mountedRef.current = false;
+
+      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+      if (metaTimerRef.current) window.clearInterval(metaTimerRef.current);
+
+      window.removeEventListener("pagehide", onPageHide);
       deactivateCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!nextFrameSrc) return;
-
-    const img = new Image();
-    preloadRef.current = img;
-
-    img.onload = () => {
-      if (preloadRef.current !== img) return;
-      setDisplaySrc(nextFrameSrc);
-      setOk(true);
-      setErr(null);
-    };
-
-    img.onerror = () => {
-      if (preloadRef.current !== img) return;
-      setOk(false);
-      setErr("Stream unavailable");
-    };
-
-    img.src = nextFrameSrc;
-
-    return () => {
-      if (preloadRef.current === img) {
-        preloadRef.current = null;
-      }
-    };
-  }, [nextFrameSrc]);
-
-  useEffect(() => {
     if (!base) return;
 
-    const id = window.setInterval(() => {
-      setFrameNonce((n) => n + 1);
-    }, 350);
+    if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+
+    pollTimerRef.current = window.setInterval(() => {
+      loadNextFrame(
+        `${base}/camera/latest?device_id=${encodeURIComponent(
+          DEVICE_ID
+        )}&mode=${encodeURIComponent(mode)}&t=${Date.now()}`
+      );
+    }, 120);
 
     return () => {
-      window.clearInterval(id);
+      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
     };
-  }, [base]);
+  }, [base, mode]);
+
+  useEffect(() => {
+    if (!base || !metaUrl) return;
+
+    const pollMeta = async () => {
+      try {
+        const res = await fetch(metaUrl, {
+          credentials: "include",
+          headers: authHeaders(),
+          cache: "no-store",
+        });
+
+        const data = (await res.json()) as CameraMeta;
+
+        if (!mountedRef.current) return;
+
+        if (!data?.available) {
+          setOk(false);
+          setStatusText("Waiting for camera frame...");
+          return;
+        }
+
+        const isFresh =
+          typeof data.updated_at === "number"
+            ? Date.now() / 1000 - data.updated_at < 3
+            : false;
+
+        if (data.mode === "detection") {
+          setStatusText(isFresh ? "Detection mode active" : "Detection paused");
+        } else {
+          setStatusText(isFresh ? "Raw mode active" : "Raw paused");
+        }
+
+        if (typeof data.mode === "string" && data.mode !== mode) {
+          setMode(data.mode);
+        }
+
+        setMetaTick((n) => n + 1);
+      } catch {
+        if (!mountedRef.current) return;
+        setOk(false);
+        setStatusText("Camera disconnected");
+      }
+    };
+
+    pollMeta();
+    metaTimerRef.current = window.setInterval(pollMeta, 1000);
+
+    return () => {
+      if (metaTimerRef.current) window.clearInterval(metaTimerRef.current);
+    };
+  }, [base, metaUrl, mode, token]);
+
+  useEffect(() => {
+    if (frameSrc) {
+      loadNextFrame(frameSrc);
+    }
+  }, [frameSrc]);
 
   if (!API_BASE) {
     return (
@@ -163,6 +274,8 @@ export default function CameraFeedSecure() {
         <div className="cam-title">Live Camera Feed</div>
 
         <div className="cam-toolbar">
+          <div className="cam-status-text">{statusText}</div>
+
           <div className={`cam-status ${ok ? "good" : "bad"}`}>
             ● {ok ? "Connected" : "Disconnected"}
           </div>
@@ -184,7 +297,11 @@ export default function CameraFeedSecure() {
           </button>
 
           <button
-            onClick={() => setFrameNonce((n) => n + 1)}
+            onClick={() => loadNextFrame(
+              `${base}/camera/latest?device_id=${encodeURIComponent(
+                DEVICE_ID
+              )}&mode=${encodeURIComponent(mode)}&t=${Date.now()}`
+            )}
             disabled={busy}
             className="cam-btn"
           >
@@ -202,7 +319,12 @@ export default function CameraFeedSecure() {
             draggable={false}
           />
         ) : (
-          <div className="cam-placeholder">Waiting for camera frame...</div>
+          <div className="cam-placeholder">
+            <div className="cam-placeholder-title">Waiting for camera frame...</div>
+            <div className="cam-placeholder-subtitle">
+              The Jetson camera is starting up.
+            </div>
+          </div>
         )}
       </div>
 

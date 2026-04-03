@@ -238,6 +238,7 @@ async def command_loop():
                 elif cmd == "camera_activate_raw":
                     try:
                         camera_service.activate("raw")
+                        _reset_uploaded_signature()
                         await asyncio.to_thread(
                             api.ack_command,
                             {
@@ -263,6 +264,7 @@ async def command_loop():
                 elif cmd == "camera_activate_detection":
                     try:
                         camera_service.activate("detection")
+                        _reset_uploaded_signature()
                         await asyncio.to_thread(
                             api.ack_command,
                             {
@@ -288,6 +290,7 @@ async def command_loop():
                 elif cmd == "camera_deactivate":
                     try:
                         camera_service.deactivate()
+                        _reset_uploaded_signature()
                         await asyncio.to_thread(
                             api.ack_command,
                             {
@@ -331,6 +334,11 @@ async def command_loop():
 # -------------------------------------------------------------------
 # CAMERA UPLOAD BRIDGE
 # -------------------------------------------------------------------
+def _reset_uploaded_signature():
+    global _last_uploaded_signature
+    _last_uploaded_signature = None
+
+
 def upload_latest_frame_once():
     global _last_uploaded_signature
 
@@ -346,7 +354,7 @@ def upload_latest_frame_once():
         return
 
     mode = camera_service.get_mode()
-    signature = f"{mode}:{len(frame)}:{frame[:16]!r}"
+    signature = f"{mode}:{len(frame)}:{frame[:32]!r}"
 
     if signature == _last_uploaded_signature:
         return
@@ -361,7 +369,7 @@ def upload_latest_frame_once():
         "mode": mode,
     }
 
-    resp = requests.post(url, params=params, headers=headers, data=frame, timeout=5)
+    resp = requests.post(url, params=params, headers=headers, data=frame, timeout=3)
     resp.raise_for_status()
     _last_uploaded_signature = signature
 
@@ -373,7 +381,7 @@ async def camera_upload_loop():
         except Exception as e:
             quiet_print("camera_upload", f"[CAMERA_UPLOAD] failed: {e}")
 
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.10)
 
 
 # -------------------------------------------------------------------
@@ -436,6 +444,7 @@ async def lifespan(app_instance: FastAPI):
 
     try:
         camera_service.deactivate()
+        _reset_uploaded_signature()
     except Exception:
         pass
 
@@ -482,6 +491,7 @@ async def camera_frame():
 
     if not status.get("enabled"):
         camera_service.activate("raw")
+        _reset_uploaded_signature()
         time.sleep(0.4)
 
     frame = camera_service.get_jpeg()
@@ -503,6 +513,7 @@ async def camera_frame():
 async def activate_camera(mode: str = Query("raw", pattern="^(raw|detection)$")):
     try:
         camera_service.activate(mode)
+        _reset_uploaded_signature()
         return {"ok": True, "enabled": True, "mode": camera_service.get_mode()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to activate camera: {e}")
@@ -511,6 +522,7 @@ async def activate_camera(mode: str = Query("raw", pattern="^(raw|detection)$"))
 @app.post("/camera/deactivate")
 async def deactivate_camera():
     camera_service.deactivate()
+    _reset_uploaded_signature()
     return {"ok": True, "enabled": False}
 
 
@@ -523,6 +535,7 @@ async def set_camera_mode(mode: str = Query(..., pattern="^(raw|detection)$")):
     else:
         camera_service.set_mode(mode)
 
+    _reset_uploaded_signature()
     return {"ok": True, "enabled": True, "mode": camera_service.get_mode()}
 
 
@@ -533,9 +546,11 @@ async def camera_stream(mode: str = Query("raw", pattern="^(raw|detection)$")):
 
         if not status.get("enabled"):
             camera_service.activate(mode)
+            _reset_uploaded_signature()
             time.sleep(0.4)
         elif camera_service.get_mode() != mode:
             camera_service.set_mode(mode)
+            _reset_uploaded_signature()
             time.sleep(0.2)
 
         return StreamingResponse(
