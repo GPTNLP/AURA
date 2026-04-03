@@ -164,11 +164,12 @@ async def status_loop():
             await asyncio.to_thread(api.status, payload)
             cpu = payload.get("cpu_percent")
             ram = payload.get("ram_percent")
+            gpu = payload.get("gpu_percent")
             batt = payload.get("battery_percent")
             temp = payload.get("temperature_c")
             quiet_print(
                 "status",
-                f"[STATUS] ok cpu={cpu} ram={ram} batt={batt} temp={temp}",
+                f"[STATUS] ok cpu={cpu} gpu={gpu} ram={ram} batt={batt} temp={temp}",
             )
         except Exception as e:
             queue_status(payload)
