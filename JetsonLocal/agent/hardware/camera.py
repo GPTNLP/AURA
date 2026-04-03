@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 import cv2
 import numpy as np
 
-from config import (
+from core.config import (
     CAMERA_DEVICE_INDEX,
     CAMERA_DEVICE_PATH,
     CAMERA_WIDTH,
