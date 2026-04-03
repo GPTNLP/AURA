@@ -1,19 +1,23 @@
 import sys
 from pathlib import Path
 import asyncio
+import time
+from typing import Optional
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
+import serial
+
 from ai.chat_manager import chat_manager
 
-# --- PATH FIX: Add the 'agent' directory to sys.path so sub-folders are recognized ---
+# --- PATH FIX ---
 AGENT_DIR = Path(__file__).resolve().parent
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
-# Now these imports will resolve correctly
 from core.config import STATIC_DIR, DEVICE_ID
 from cloud.api_client import ApiClient
 from hardware.serial_link import serial_link
@@ -22,44 +26,58 @@ from ai.rag_manager import rag_manager
 from ai.intent_parser import parse_intent
 from ai.stt_service import STTService
 
+# ---------------- CONFIG DEFAULTS (SAFE FALLBACKS) ----------------
+HEARTBEAT_SECONDS = 10
+STATUS_SECONDS = 2
+SERIAL_PORT = "/dev/ttyACM0"
+
+# ---------------- LIFESPAN ----------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup tasks
     serial_link.connect()
     rag_manager.initialize()
     asyncio.create_task(command_loop())
     asyncio.create_task(stt_service.continuous_stt_loop())
     yield
-    # Shutdown tasks (if any) could go here
-    
+
 app = FastAPI(title="AURA Edge API (Jetson Orin Nano)", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
 api = ApiClient()
 
+# ---------------- CONNECTION MANAGER ----------------
 class ConnectionManager:
     def __init__(self):
         self.active_connections = []
+
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
+
     async def broadcast(self, message: dict):
         for connection in self.active_connections:
-            try: await connection.send_json(message)
-            except: pass
+            try:
+                await connection.send_json(message)
+            except:
+                pass
 
 ui_manager = ConnectionManager()
 
+# ---------------- RUNTIME CONFIG ----------------
 runtime_config = {
     "poll_seconds": 0.05,
     "heartbeat_seconds": HEARTBEAT_SECONDS,
     "status_seconds": STATUS_SECONDS,
 }
 
+# ---------------- CAMERA STATE ----------------
 CAMERA_UPLOAD_TARGET_FPS = 30.0
 CAMERA_UPLOAD_MIN_INTERVAL = 1.0 / CAMERA_UPLOAD_TARGET_FPS
+
 camera_upload_lock = asyncio.Lock()
 camera_upload_latest_jpeg: Optional[bytes] = None
 camera_upload_latest_mode = "raw"
@@ -69,34 +87,22 @@ camera_upload_last_send_ts = 0.0
 
 MOVEMENT_COMMANDS = {"forward", "backward", "left", "right", "stop"}
 
-
-def send_or_queue_log(level: str, event: str, message: str, meta=None):
-    entry = write_local_log(level, event, message, meta)
-    payload = {
-        "device_id": entry["device_id"],
-        "level": entry["level"],
-        "event": entry["event"],
-        "message": entry["message"],
-        "meta": entry["meta"],
-    }
-    try:
-        api.log(payload)
-    except Exception:
-        queue_log(payload)
-
-
+# ---------------- HARDWARE INIT (FIXED) ----------------
 def init_hardware():
     global esp_serial
     try:
         esp_serial = serial.Serial(SERIAL_PORT, 115200, timeout=1)
         time.sleep(2.0)
+    except Exception as e:
+        print(f"[HARDWARE ERROR] {e}")
+
+# ---------------- USER MESSAGE HANDLER ----------------
 async def handle_user_message(user_msg: str):
-    """Handles STT/Chat inputs and manages offline JSON history."""
     await ui_manager.broadcast({"type": "chat", "sender": "user", "text": user_msg})
     chat_manager.add_message("user", user_msg, api, DEVICE_ID)
-    
+
     intent = await parse_intent(user_msg)
-    
+
     if intent == "MOVEMENT":
         try:
             ack = serial_link.send_command(user_msg)
@@ -109,9 +115,10 @@ async def handle_user_message(user_msg: str):
     await ui_manager.broadcast({"type": "chat", "sender": "ai", "text": ai_reply})
     chat_manager.add_message("assistant", ai_reply, api, DEVICE_ID)
 
-# Initialize the STT service with the callback
+# ---------------- STT ----------------
 stt_service = STTService(callback=handle_user_message)
 
+# ---------------- COMMAND LOOP ----------------
 async def command_loop():
     while True:
         try:
@@ -123,39 +130,85 @@ async def command_loop():
                 cmd = (command.get("command") or "").strip().lower()
                 payload = command.get("payload") or {}
 
-                # 1. Upload PDF -> Build DB -> Sync ZIP to Cloud
                 if cmd == "build_rag":
-                    success = await rag_manager.ingest_document_and_pack(payload.get("url"), api, DEVICE_ID)
-                    await asyncio.to_thread(api.ack_command, {"command_id": cmd_id, "device_id": DEVICE_ID, "status": "completed" if success else "failed"})
-                
-                # 2. Download Pre-built Vector DB from Cloud -> Skip PDF upload
-                elif cmd == "load_vector_db":
-                    success = await rag_manager.load_remote_db(payload.get("zip_url"), api)
-                    await asyncio.to_thread(api.ack_command, {"command_id": cmd_id, "device_id": DEVICE_ID, "status": "completed" if success else "failed"})
+                    success = await rag_manager.ingest_document_and_pack(
+                        payload.get("url"), api, DEVICE_ID
+                    )
+                    await asyncio.to_thread(
+                        api.ack_command,
+                        {
+                            "command_id": cmd_id,
+                            "device_id": DEVICE_ID,
+                            "status": "completed" if success else "failed",
+                        },
+                    )
 
-                # 3. Sync Chat Session (Switch active thread)
+                elif cmd == "load_vector_db":
+                    success = await rag_manager.load_remote_db(
+                        payload.get("zip_url"), api
+                    )
+                    await asyncio.to_thread(
+                        api.ack_command,
+                        {
+                            "command_id": cmd_id,
+                            "device_id": DEVICE_ID,
+                            "status": "completed" if success else "failed",
+                        },
+                    )
+
                 elif cmd == "load_chat_session":
-                    chat_manager.set_session(payload.get("session_id"), payload.get("history"))
-                    await asyncio.to_thread(api.ack_command, {"command_id": cmd_id, "device_id": DEVICE_ID, "status": "completed"})
-                
-                # 2. Movement Control
+                    chat_manager.set_session(
+                        payload.get("session_id"), payload.get("history")
+                    )
+                    await asyncio.to_thread(
+                        api.ack_command,
+                        {
+                            "command_id": cmd_id,
+                            "device_id": DEVICE_ID,
+                            "status": "completed",
+                        },
+                    )
+
                 elif cmd in serial_link.MOVEMENT_COMMANDS:
                     try:
                         serial_link.send_command(cmd, payload.get("value", ""))
-                        await asyncio.to_thread(api.ack_command, {"command_id": cmd_id, "device_id": DEVICE_ID, "status": "completed"})
+                        await asyncio.to_thread(
+                            api.ack_command,
+                            {
+                                "command_id": cmd_id,
+                                "device_id": DEVICE_ID,
+                                "status": "completed",
+                            },
+                        )
                     except Exception as e:
-                        await asyncio.to_thread(api.ack_command, {"command_id": cmd_id, "device_id": DEVICE_ID, "status": "failed", "note": str(e)})
-                        
-                # 3. Chat Control (from Web UI Simulator)
+                        await asyncio.to_thread(
+                            api.ack_command,
+                            {
+                                "command_id": cmd_id,
+                                "device_id": DEVICE_ID,
+                                "status": "failed",
+                                "note": str(e),
+                            },
+                        )
+
                 elif cmd == "chat_prompt":
                     ai_reply = await rag_manager.query(payload.get("query", ""))
-                    await asyncio.to_thread(api.ack_command, {"command_id": cmd_id, "device_id": DEVICE_ID, "status": "completed", "result": {"answer": ai_reply}})
+                    await asyncio.to_thread(
+                        api.ack_command,
+                        {
+                            "command_id": cmd_id,
+                            "device_id": DEVICE_ID,
+                            "status": "completed",
+                            "result": {"answer": ai_reply},
+                        },
+                    )
 
         except Exception as e:
             print(f"[COMMAND] poll failed: {e}")
-            
+
         await asyncio.sleep(0.5)
 
+# ---------------- ROUTES ----------------
 @app.get("/")
 async def serve_ui():
     return FileResponse(str(STATIC_DIR / "index.html"))
@@ -171,5 +224,6 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         ui_manager.disconnect(websocket)
 
+# ---------------- RUN ----------------
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
