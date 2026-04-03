@@ -22,17 +22,17 @@ if str(JETSONLOCAL_DIR) not in sys.path:
     sys.path.insert(0, str(JETSONLOCAL_DIR))
 
 # -------------------------------------------------------------------
-# IMPORTS - CURRENT REORG STRUCTURE
+# IMPORTS - MATCHED TO CURRENT REORG
 # -------------------------------------------------------------------
 from core.config import (
     DEVICE_ID,
     DEVICE_NAME,
     DEVICE_TYPE,
     DEVICE_SOFTWARE_VERSION,
-    DEVICE_HEARTBEAT_SECONDS,
-    DEVICE_STATUS_SECONDS,
-    DEVICE_CONFIG_REFRESH_SECONDS,
-    DEVICE_OFFLINE_RETRY_SECONDS,
+    HEARTBEAT_SECONDS,
+    STATUS_SECONDS,
+    CONFIG_REFRESH_SECONDS,
+    OFFLINE_RETRY_SECONDS,
     LOCAL_DB_NAME,
 )
 
@@ -54,11 +54,23 @@ api = ApiClient()
 
 runtime_config = {
     "poll_seconds": 0.10,
-    "heartbeat_seconds": int(DEVICE_HEARTBEAT_SECONDS),
-    "status_seconds": int(DEVICE_STATUS_SECONDS),
+    "heartbeat_seconds": int(HEARTBEAT_SECONDS),
+    "status_seconds": int(STATUS_SECONDS),
 }
 
 MOVEMENT_COMMANDS = {"forward", "backward", "left", "right", "stop"}
+
+
+# -------------------------------------------------------------------
+# QUIET PRINT
+# -------------------------------------------------------------------
+_last_messages = {}
+
+
+def quiet_print(key: str, message: str) -> None:
+    if _last_messages.get(key) != message:
+        print(message)
+        _last_messages[key] = message
 
 
 # -------------------------------------------------------------------
@@ -84,14 +96,13 @@ def send_or_queue_log(level: str, event: str, message: str, meta=None):
 # DEVICE REGISTRATION / CONFIG
 # -------------------------------------------------------------------
 def build_register_payload():
+    import socket
+
     local_ip = "127.0.0.1"
     hostname = "jetson"
 
     try:
-        import socket
-
         hostname = socket.gethostname()
-
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         local_ip = s.getsockname()[0]
@@ -113,6 +124,7 @@ async def register_device():
     payload = build_register_payload()
     result = await asyncio.to_thread(api.register, payload)
     send_or_queue_log("info", "device_registered", "Device registered with backend", result)
+    quiet_print("register", f"[REGISTER] ok device_id={DEVICE_ID}")
     return result
 
 
@@ -126,6 +138,7 @@ async def refresh_config():
         runtime_config["status_seconds"] = int(result.get("status_seconds", runtime_config["status_seconds"]))
     except Exception as e:
         send_or_queue_log("warning", "config_refresh_failed", f"Failed to refresh config: {e}")
+        quiet_print("config", f"[CONFIG] using local defaults ({e})")
 
 
 # -------------------------------------------------------------------
@@ -138,6 +151,7 @@ async def heartbeat_loop():
             await asyncio.to_thread(api.heartbeat, payload)
         except Exception as e:
             send_or_queue_log("warning", "heartbeat_failed", f"Heartbeat failed: {e}")
+            quiet_print("heartbeat", f"[HEARTBEAT] failed: {e}")
 
         await asyncio.sleep(runtime_config["heartbeat_seconds"])
 
@@ -148,9 +162,18 @@ async def status_loop():
 
         try:
             await asyncio.to_thread(api.status, payload)
+            cpu = payload.get("cpu_percent")
+            ram = payload.get("ram_percent")
+            batt = payload.get("battery_percent")
+            temp = payload.get("temperature_c")
+            quiet_print(
+                "status",
+                f"[STATUS] ok cpu={cpu} ram={ram} batt={batt} temp={temp}",
+            )
         except Exception as e:
             queue_status(payload)
             send_or_queue_log("warning", "status_failed", f"Status upload failed: {e}")
+            quiet_print("status", f"[STATUS] failed: {e}")
 
         await asyncio.sleep(runtime_config["status_seconds"])
 
@@ -158,18 +181,21 @@ async def status_loop():
 async def flush_loop():
     while True:
         try:
-            await asyncio.to_thread(flush_logs, api.log)
-            await asyncio.to_thread(flush_statuses, api.status)
+            sent_logs = await asyncio.to_thread(flush_logs, api.log)
+            sent_status = await asyncio.to_thread(flush_statuses, api.status)
+
+            if sent_logs or sent_status:
+                quiet_print("flush", f"[FLUSH] logs={sent_logs} statuses={sent_status}")
         except Exception:
             pass
 
-        await asyncio.sleep(int(DEVICE_OFFLINE_RETRY_SECONDS))
+        await asyncio.sleep(int(OFFLINE_RETRY_SECONDS))
 
 
 async def config_loop():
     while True:
         await refresh_config()
-        await asyncio.sleep(int(DEVICE_CONFIG_REFRESH_SECONDS))
+        await asyncio.sleep(int(CONFIG_REFRESH_SECONDS))
 
 
 async def command_loop():
@@ -195,6 +221,7 @@ async def command_loop():
                                 "note": f"Sent movement command: {cmd}",
                             },
                         )
+                        quiet_print("command", f"[COMMAND] ok {cmd}")
                     except Exception as e:
                         await asyncio.to_thread(
                             api.ack_command,
@@ -205,6 +232,7 @@ async def command_loop():
                                 "note": f"Movement failed: {e}",
                             },
                         )
+                        quiet_print("command", f"[COMMAND] failed {cmd}: {e}")
 
                 elif cmd == "camera_activate_raw":
                     try:
@@ -218,6 +246,7 @@ async def command_loop():
                                 "note": "Camera activated in raw mode",
                             },
                         )
+                        quiet_print("camera_cmd", "[COMMAND] camera raw")
                     except Exception as e:
                         await asyncio.to_thread(
                             api.ack_command,
@@ -228,6 +257,7 @@ async def command_loop():
                                 "note": f"Camera raw activation failed: {e}",
                             },
                         )
+                        quiet_print("camera_cmd", f"[COMMAND] camera raw failed: {e}")
 
                 elif cmd == "camera_activate_detection":
                     try:
@@ -241,6 +271,7 @@ async def command_loop():
                                 "note": "Camera activated in detection mode",
                             },
                         )
+                        quiet_print("camera_cmd", "[COMMAND] camera detection")
                     except Exception as e:
                         await asyncio.to_thread(
                             api.ack_command,
@@ -251,6 +282,7 @@ async def command_loop():
                                 "note": f"Camera detection activation failed: {e}",
                             },
                         )
+                        quiet_print("camera_cmd", f"[COMMAND] camera detection failed: {e}")
 
                 elif cmd == "camera_deactivate":
                     try:
@@ -264,6 +296,7 @@ async def command_loop():
                                 "note": "Camera deactivated",
                             },
                         )
+                        quiet_print("camera_cmd", "[COMMAND] camera off")
                     except Exception as e:
                         await asyncio.to_thread(
                             api.ack_command,
@@ -274,6 +307,7 @@ async def command_loop():
                                 "note": f"Camera deactivation failed: {e}",
                             },
                         )
+                        quiet_print("camera_cmd", f"[COMMAND] camera off failed: {e}")
 
                 else:
                     await asyncio.to_thread(
@@ -285,9 +319,10 @@ async def command_loop():
                             "note": f"Invalid command: {cmd}",
                         },
                     )
+                    quiet_print("command", f"[COMMAND] invalid {cmd}")
 
-        except Exception:
-            pass
+        except Exception as e:
+            quiet_print("command_poll", f"[COMMAND] poll failed: {e}")
 
         await asyncio.sleep(runtime_config["poll_seconds"])
 
@@ -319,9 +354,9 @@ def mjpeg_generator() -> Iterator[bytes]:
 async def lifespan(app_instance: FastAPI):
     try:
         serial_link.connect()
-        send_or_queue_log("info", "serial_connected", "Serial initialized")
     except Exception as e:
         send_or_queue_log("warning", "serial_unavailable", f"Serial unavailable: {e}")
+        quiet_print("serial", f"[SERIAL] unavailable: {e}")
 
     send_or_queue_log("info", "camera_idle", "Camera service idle until activated")
 
@@ -329,6 +364,7 @@ async def lifespan(app_instance: FastAPI):
         await register_device()
     except Exception as e:
         send_or_queue_log("warning", "register_failed", f"Initial register failed: {e}")
+        quiet_print("register", f"[REGISTER] failed: {e}")
 
     asyncio.create_task(config_loop())
     asyncio.create_task(heartbeat_loop())
@@ -336,6 +372,7 @@ async def lifespan(app_instance: FastAPI):
     asyncio.create_task(flush_loop())
     asyncio.create_task(command_loop())
 
+    quiet_print("startup", "[STARTUP] telemetry agent running")
     yield
 
     try:
@@ -355,9 +392,16 @@ async def health():
     return {
         "ok": True,
         "device_id": DEVICE_ID,
+        "device_name": DEVICE_NAME,
+        "device_type": DEVICE_TYPE,
         "db_name": LOCAL_DB_NAME,
         "camera": camera_service.get_status(),
     }
+
+
+@app.get("/status")
+async def status():
+    return build_status_payload()
 
 
 @app.get("/camera/status")
