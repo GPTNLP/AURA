@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Iterator
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 import uvicorn
 
 # -------------------------------------------------------------------
@@ -60,10 +60,6 @@ runtime_config = {
 
 MOVEMENT_COMMANDS = {"forward", "backward", "left", "right", "stop"}
 
-
-# -------------------------------------------------------------------
-# QUIET PRINT
-# -------------------------------------------------------------------
 _last_messages = {}
 
 
@@ -135,7 +131,7 @@ async def refresh_config():
         result = await asyncio.to_thread(api.get_config, DEVICE_ID)
         runtime_config["poll_seconds"] = float(result.get("poll_seconds", runtime_config["poll_seconds"]))
         runtime_config["heartbeat_seconds"] = int(result.get("heartbeat_seconds", runtime_config["heartbeat_seconds"]))
-        runtime_config["status_seconds"] = int(result.get("status_seconds", runtime_config["status_seconds"]))
+        runtime_config["status_seconds"] = 1
     except Exception as e:
         send_or_queue_log("warning", "config_refresh_failed", f"Failed to refresh config: {e}")
         quiet_print("config", f"[CONFIG] using local defaults ({e})")
@@ -333,15 +329,24 @@ async def command_loop():
 def mjpeg_generator() -> Iterator[bytes]:
     camera_service.add_stream_client()
     try:
+        empty_count = 0
+
         while True:
             frame = camera_service.get_jpeg()
+
             if frame is None:
+                empty_count += 1
+                if empty_count % 50 == 0:
+                    quiet_print("camera_stream_wait", "[CAMERA] waiting for first frame")
                 time.sleep(0.03)
                 continue
 
+            empty_count = 0
+
             yield (
                 b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-cache\r\n\r\n" + frame + b"\r\n"
             )
     finally:
         camera_service.remove_stream_client()
@@ -417,6 +422,29 @@ async def camera_detections():
     }
 
 
+@app.get("/camera/frame.jpg")
+async def camera_frame():
+    status = camera_service.get_status()
+
+    if not status.get("enabled"):
+        camera_service.activate("raw")
+        time.sleep(0.4)
+
+    frame = camera_service.get_jpeg()
+    if frame is None:
+        raise HTTPException(status_code=503, detail="No camera frame available yet")
+
+    return StreamingResponse(
+        iter([frame]),
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 @app.post("/camera/activate")
 async def activate_camera(mode: str = Query("raw", pattern="^(raw|detection)$")):
     try:
@@ -445,15 +473,29 @@ async def set_camera_mode(mode: str = Query(..., pattern="^(raw|detection)$")):
 
 
 @app.get("/camera/stream")
-async def camera_stream():
-    status = camera_service.get_status()
-    if not status.get("enabled"):
-        raise HTTPException(status_code=503, detail="Camera is not activated")
+async def camera_stream(mode: str = Query("raw", pattern="^(raw|detection)$")):
+    try:
+        status = camera_service.get_status()
 
-    return StreamingResponse(
-        mjpeg_generator(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-    )
+        if not status.get("enabled"):
+            camera_service.activate(mode)
+            time.sleep(0.4)
+        elif camera_service.get_mode() != mode:
+            camera_service.set_mode(mode)
+            time.sleep(0.2)
+
+        return StreamingResponse(
+            mjpeg_generator(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "Connection": "keep-alive",
+            },
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start camera stream: {e}")
 
 
 # -------------------------------------------------------------------

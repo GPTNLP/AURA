@@ -4,15 +4,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# --- PATH FIX: Adjusted for the new 'core/' subfolder ---
-BASE_DIR = Path(__file__).resolve().parent      # This is now the 'core' folder
-AGENT_DIR = BASE_DIR.parent                     # This is the 'agent' folder
-JETSONLOCAL_DIR = AGENT_DIR.parent              # This is the 'JetsonLocal' root folder
+BASE_DIR = Path(__file__).resolve().parent
+AGENT_DIR = BASE_DIR.parent
+JETSONLOCAL_DIR = AGENT_DIR.parent
 
 if str(JETSONLOCAL_DIR) not in sys.path:
     sys.path.insert(0, str(JETSONLOCAL_DIR))
 
-# These will now correctly point to JetsonLocal/static and JetsonLocal/storage
 STATIC_DIR = JETSONLOCAL_DIR / "static"
 STORAGE_DIR = JETSONLOCAL_DIR / "storage"
 
@@ -44,19 +42,17 @@ OFFLINE_RETRY_SECONDS = int(os.getenv("DEVICE_OFFLINE_RETRY_SECONDS", "10"))
 SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyUSB0")
 INPUT_MODE = os.getenv("INPUT_MODE", "keyboard").strip().lower()
 
-# local Jetson demo / edge AI config
 DEFAULT_MODEL = os.getenv("AURA_LLM_MODEL", "llama3.2")
 EMBEDDING_MODEL = os.getenv("AURA_EMBED_MODEL", "nomic-embed-text")
 LOCAL_DB_NAME = os.getenv("LOCAL_DB_NAME", "jetson_local_db")
 
-# camera config for USB / UVC webcams
 CAMERA_DEVICE_INDEX = int(os.getenv("CAMERA_DEVICE_INDEX", "0"))
 CAMERA_DEVICE_PATH = os.getenv("CAMERA_DEVICE_PATH", "").strip()
 CAMERA_WIDTH = int(os.getenv("CAMERA_WIDTH", "960"))
 CAMERA_HEIGHT = int(os.getenv("CAMERA_HEIGHT", "540"))
 CAMERA_FPS = int(os.getenv("CAMERA_FPS", "30"))
 CAMERA_JPEG_QUALITY = int(os.getenv("CAMERA_JPEG_QUALITY", "60"))
-CAMERA_IDLE_TIMEOUT_SECONDS = int(os.getenv("CAMERA_IDLE_TIMEOUT_SECONDS", "10"))
+CAMERA_IDLE_TIMEOUT_SECONDS = int(os.getenv("CAMERA_IDLE_TIMEOUT_SECONDS", "60"))
 CAMERA_DETECT_CONF = float(os.getenv("CAMERA_DETECT_CONF", "0.25"))
 CAMERA_INFER_SIZE = int(os.getenv("CAMERA_INFER_SIZE", "416"))
 
