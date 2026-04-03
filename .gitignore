@@ -48,3 +48,36 @@ backend/storage/
 # Logs
 # ========================
 *.log
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment Variables / Secrets
+.env
+.env.production
+.env.local
+
+# Machine Learning Models (Optional: remove if using Git LFS)
+*.pt
+*.pth
+*.onnx
+
+# Storage, Uploads, and Databases
+**/storage/
+**/databases/
+**/documents/
+*.sqlite3
+*.db
+*.npy
+*.index
+*.bin
+
+# Logs and Dynamic State
+**/logs/
+**/sessions/
+**/queue/
+*.log
+*.jsonl
+runtime.json
