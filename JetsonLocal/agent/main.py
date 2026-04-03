@@ -11,25 +11,24 @@ import psutil
 import uvicorn
 from fastapi import FastAPI
 
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
 # PATH SETUP
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
 AGENT_DIR = Path(__file__).resolve().parent
 if str(AGENT_DIR) not in sys.path:
     sys.path.insert(0, str(AGENT_DIR))
 
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
 # IMPORTS
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
 import core.config as cfg
 from cloud.api_client import ApiClient
 from hardware.serial_link import serial_link
 from hardware.camera import camera_service
-from ai.rag_manager import rag_manager
 
-# -------------------------------------------------------------------
-# CONFIG HELPERS
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------------
 DEVICE_ID = getattr(cfg, "DEVICE_ID", "jetson-001")
 DEVICE_NAME = getattr(cfg, "DEVICE_NAME", "AURA Jetson")
 DEVICE_TYPE = getattr(cfg, "DEVICE_TYPE", "jetson")
@@ -41,9 +40,9 @@ POLL_SECONDS = float(getattr(cfg, "DEVICE_POLL_SECONDS", 0.5))
 
 api = ApiClient()
 
-# -------------------------------------------------------------------
-# GLOBAL STATE
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
+# GLOBALS
+# ------------------------------------------------------------------
 runtime_state = {
     "started_at": time.time(),
     "registered": False,
@@ -55,28 +54,23 @@ runtime_state = {
     "last_command_error": None,
 }
 
-# -------------------------------------------------------------------
-# SMALL UTILS
-# -------------------------------------------------------------------
-def _now() -> int:
+last_register_message = None
+last_status_message = None
+last_command_message = None
+
+
+# ------------------------------------------------------------------
+# HELPERS
+# ------------------------------------------------------------------
+def quiet_print(prefix: str, message: str) -> None:
+    print(f"{prefix} {message}")
+
+
+def now_ts() -> int:
     return int(time.time())
 
 
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-
-def _get_local_ip() -> str:
+def get_local_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -87,13 +81,41 @@ def _get_local_ip() -> str:
         return "127.0.0.1"
 
 
-def _get_cpu_temp_c() -> Optional[float]:
-    thermal_paths = [
+def get_cpu_percent() -> float:
+    try:
+        return round(psutil.cpu_percent(interval=None), 1)
+    except Exception:
+        return 0.0
+
+
+def get_ram_percent() -> float:
+    try:
+        return round(psutil.virtual_memory().percent, 1)
+    except Exception:
+        return 0.0
+
+
+def get_disk_percent() -> float:
+    try:
+        return round(psutil.disk_usage("/").percent, 1)
+    except Exception:
+        return 0.0
+
+
+def get_uptime_seconds() -> int:
+    try:
+        return int(time.time() - psutil.boot_time())
+    except Exception:
+        return int(time.time() - runtime_state["started_at"])
+
+
+def get_cpu_temp_c() -> Optional[float]:
+    paths = [
         "/sys/devices/virtual/thermal/thermal_zone0/temp",
         "/sys/class/thermal/thermal_zone0/temp",
     ]
 
-    for path in thermal_paths:
+    for path in paths:
         try:
             if os.path.exists(path):
                 raw = Path(path).read_text().strip()
@@ -116,91 +138,53 @@ def _get_cpu_temp_c() -> Optional[float]:
     return None
 
 
-def _get_disk_percent() -> float:
+def get_wifi_dbm() -> Optional[int]:
     try:
-        return round(psutil.disk_usage("/").percent, 1)
+        text = Path("/proc/net/wireless").read_text()
+        lines = [line.strip() for line in text.splitlines() if ":" in line]
+        if not lines:
+            return None
+
+        parts = lines[0].replace(":", " ").split()
+        if len(parts) >= 4:
+            level = float(parts[3].rstrip("."))
+            if level > 0:
+                level = level - 256
+            return int(level)
     except Exception:
-        return 0.0
+        pass
+
+    return None
 
 
-def _get_ram_percent() -> float:
-    try:
-        return round(psutil.virtual_memory().percent, 1)
-    except Exception:
-        return 0.0
-
-
-def _get_cpu_percent() -> float:
-    try:
-        return round(psutil.cpu_percent(interval=None), 1)
-    except Exception:
-        return 0.0
-
-
-def _get_uptime_seconds() -> int:
-    try:
-        return int(time.time() - psutil.boot_time())
-    except Exception:
-        return int(time.time() - runtime_state["started_at"])
-
-
-def _find_wifi_signal_dbm() -> Optional[int]:
+def get_battery_percent() -> Optional[float]:
     candidates = [
-        "/proc/net/wireless",
+        "/sys/class/power_supply/BAT0/capacity",
+        "/sys/class/power_supply/battery/capacity",
     ]
 
     for path in candidates:
         try:
-            if not os.path.exists(path):
-                continue
-
-            text = Path(path).read_text()
-            lines = [line.strip() for line in text.splitlines() if ":" in line]
-            if not lines:
-                continue
-
-            # Typical format: wlan0: ... link level noise
-            # level is often negative-ish encoded or absolute depending on driver
-            parts = lines[0].replace(":", " ").split()
-            if len(parts) >= 4:
-                level = float(parts[3].rstrip("."))
-                if level > 0:
-                    level = level - 256
-                return int(level)
+            p = Path(path)
+            if p.exists():
+                return round(float(p.read_text().strip()), 1)
         except Exception:
             pass
 
     return None
 
 
-def _find_battery_percent() -> Optional[float]:
-    battery_dirs = [
-        "/sys/class/power_supply/BAT0",
-        "/sys/class/power_supply/battery",
+def get_battery_voltage() -> Optional[float]:
+    candidates = [
+        "/sys/class/power_supply/BAT0/voltage_now",
+        "/sys/class/power_supply/battery/voltage_now",
     ]
 
-    for base in battery_dirs:
+    for path in candidates:
         try:
-            cap = Path(base) / "capacity"
-            if cap.exists():
-                return round(float(cap.read_text().strip()), 1)
-        except Exception:
-            pass
-
-    return None
-
-
-def _find_battery_voltage() -> Optional[float]:
-    battery_dirs = [
-        "/sys/class/power_supply/BAT0",
-        "/sys/class/power_supply/battery",
-    ]
-
-    for base in battery_dirs:
-        try:
-            vp = Path(base) / "voltage_now"
-            if vp.exists():
-                value = float(vp.read_text().strip())
+            p = Path(path)
+            if p.exists():
+                value = float(p.read_text().strip())
                 if value > 1000:
                     value /= 1_000_000.0
                 return round(value, 2)
@@ -210,44 +194,162 @@ def _find_battery_voltage() -> Optional[float]:
     return None
 
 
-def collect_filometrics() -> dict:
-    camera_status = {}
+def get_gpu_percent() -> Optional[float]:
+    # Jetson-specific GPU util can vary by board/setup.
+    # Return None if not available instead of fake data.
+    candidates = [
+        "/sys/devices/gpu.0/load",
+        "/sys/class/devfreq/17000000.ga10b/load",
+    ]
+
+    for path in candidates:
+        try:
+            p = Path(path)
+            if p.exists():
+                raw = float(p.read_text().strip())
+                if raw > 100:
+                    raw = raw / 10.0
+                return round(raw, 1)
+        except Exception:
+            pass
+
+    return None
+
+
+def collect_payload() -> dict:
+    battery_percent = get_battery_percent()
+    battery_voltage = get_battery_voltage()
+    cpu_percent = get_cpu_percent()
+    cpu_temp_c = get_cpu_temp_c()
+    ram_percent = get_ram_percent()
+    disk_percent = get_disk_percent()
+    gpu_percent = get_gpu_percent()
+    wifi_dbm = get_wifi_dbm()
+    uptime_seconds = get_uptime_seconds()
+
     try:
         camera_status = camera_service.get_status()
     except Exception as e:
-        camera_status = {"camera_ready": False, "last_error": str(e)}
+        camera_status = {
+            "camera_ready": False,
+            "last_error": str(e),
+        }
+
+    thermals_state = "ok"
+    if cpu_temp_c is not None:
+        if cpu_temp_c >= 80:
+            thermals_state = "warn"
+        elif cpu_temp_c >= 70:
+            thermals_state = "warn"
 
     payload = {
+        # --------------------------------------------------------------
+        # Core identity / heartbeat
+        # --------------------------------------------------------------
         "device_id": DEVICE_ID,
         "device_name": DEVICE_NAME,
         "device_type": DEVICE_TYPE,
         "software_version": DEVICE_SOFTWARE_VERSION,
         "hostname": socket.gethostname(),
-        "local_ip": _get_local_ip(),
+        "local_ip": get_local_ip(),
         "online": True,
-        "last_seen_at": _now(),
+        "last_seen_at": now_ts(),
+
+        # --------------------------------------------------------------
+        # TOP-LEVEL COMPAT FIELDS
+        # Put everything here too so frontend/backend can read directly
+        # --------------------------------------------------------------
+        "battery": battery_percent,
+        "battery_percent": battery_percent,
+        "battery_voltage": battery_voltage,
+        "voltage": battery_voltage,
+
+        "cpu": cpu_percent,
+        "cpu_usage": cpu_percent,
+        "cpu_percent": cpu_percent,
+        "cpu_temp": cpu_temp_c,
+        "cpu_temp_c": cpu_temp_c,
+
+        "ram": ram_percent,
+        "ram_usage": ram_percent,
+        "ram_percent": ram_percent,
+        "memory": ram_percent,
+        "memory_percent": ram_percent,
+
+        "gpu": gpu_percent,
+        "gpu_usage": gpu_percent,
+        "gpu_percent": gpu_percent,
+
+        "disk": disk_percent,
+        "disk_percent": disk_percent,
+
+        "wifi": wifi_dbm,
+        "wifi_dbm": wifi_dbm,
+
+        "uptime": uptime_seconds,
+        "uptime_seconds": uptime_seconds,
+
+        # --------------------------------------------------------------
+        # Nested metrics
+        # --------------------------------------------------------------
         "metrics": {
-            "cpu_percent": _get_cpu_percent(),
-            "cpu_temp_c": _get_cpu_temp_c(),
-            "ram_percent": _get_ram_percent(),
-            "disk_percent": _get_disk_percent(),
-            "wifi_dbm": _find_wifi_signal_dbm(),
-            "battery_percent": _find_battery_percent(),
-            "battery_voltage": _find_battery_voltage(),
-            "uptime_seconds": _get_uptime_seconds(),
+            "battery": battery_percent,
+            "battery_percent": battery_percent,
+            "battery_voltage": battery_voltage,
+            "voltage": battery_voltage,
+            "cpu": cpu_percent,
+            "cpu_usage": cpu_percent,
+            "cpu_percent": cpu_percent,
+            "cpu_temp": cpu_temp_c,
+            "cpu_temp_c": cpu_temp_c,
+            "ram": ram_percent,
+            "ram_usage": ram_percent,
+            "ram_percent": ram_percent,
+            "memory": ram_percent,
+            "memory_percent": ram_percent,
+            "gpu": gpu_percent,
+            "gpu_usage": gpu_percent,
+            "gpu_percent": gpu_percent,
+            "disk_percent": disk_percent,
+            "wifi_dbm": wifi_dbm,
+            "uptime": uptime_seconds,
+            "uptime_seconds": uptime_seconds,
         },
+
+        # --------------------------------------------------------------
+        # UI health blocks
+        # --------------------------------------------------------------
+        "system_health": {
+            "motors": "ok",
+            "sensors": "ok",
+            "thermals": thermals_state,
+        },
+        "health": {
+            "motors": "ok",
+            "sensors": "ok",
+            "thermals": thermals_state,
+        },
+        "motors_status": "ok",
+        "sensors_status": "ok",
+        "thermals_status": thermals_state,
+
+        # --------------------------------------------------------------
+        # Camera
+        # --------------------------------------------------------------
         "camera": camera_status,
+        "camera_ready": camera_status.get("camera_ready", False),
     }
 
     return payload
 
 
-# -------------------------------------------------------------------
-# API CALL ADAPTERS
-# These try several likely method names/signatures so this still works
-# even if your teammate changed ApiClient during the repo reorg.
-# -------------------------------------------------------------------
-def _call_api_method(method_names: list[str], arg_builders: list[Callable[[Callable[..., Any]], tuple[list[Any], dict[str, Any]]]]):
+# ------------------------------------------------------------------
+# API ADAPTERS
+# ------------------------------------------------------------------
+def call_api_method(
+    method_names: list[str],
+    arg_builders: list[Callable[[Callable[..., Any]], tuple[list[Any], dict[str, Any]]]],
+):
     last_error = None
 
     for method_name in method_names:
@@ -272,17 +374,17 @@ def _call_api_method(method_names: list[str], arg_builders: list[Callable[[Calla
     raise AttributeError(f"No matching ApiClient method found among: {method_names}")
 
 
-def register_with_cloud() -> Any:
+def register_with_cloud():
     payload = {
         "device_id": DEVICE_ID,
         "device_name": DEVICE_NAME,
         "device_type": DEVICE_TYPE,
         "software_version": DEVICE_SOFTWARE_VERSION,
         "hostname": socket.gethostname(),
-        "local_ip": _get_local_ip(),
+        "local_ip": get_local_ip(),
     }
 
-    return _call_api_method(
+    return call_api_method(
         ["register_device", "register", "device_register"],
         [
             lambda _m: ([payload], {}),
@@ -292,8 +394,8 @@ def register_with_cloud() -> Any:
     )
 
 
-def send_status_to_cloud(payload: dict) -> Any:
-    return _call_api_method(
+def send_status_to_cloud(payload: dict):
+    return call_api_method(
         [
             "send_status",
             "update_status",
@@ -311,8 +413,8 @@ def send_status_to_cloud(payload: dict) -> Any:
     )
 
 
-def get_next_command_from_cloud() -> dict:
-    return _call_api_method(
+def get_next_command_from_cloud():
+    return call_api_method(
         ["get_next_command", "poll_command", "next_command"],
         [
             lambda _m: ([DEVICE_ID], {}),
@@ -322,8 +424,8 @@ def get_next_command_from_cloud() -> dict:
     )
 
 
-def ack_command_to_cloud(payload: dict) -> Any:
-    return _call_api_method(
+def ack_command_to_cloud(payload: dict):
+    return call_api_method(
         ["ack_command", "acknowledge_command", "command_ack"],
         [
             lambda _m: ([payload], {}),
@@ -333,46 +435,77 @@ def ack_command_to_cloud(payload: dict) -> Any:
     )
 
 
-# -------------------------------------------------------------------
-# BACKGROUND TASKS
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
+# LOOPS
+# ------------------------------------------------------------------
 async def registration_loop():
+    global last_register_message
+
     while True:
         try:
             result = await asyncio.to_thread(register_with_cloud)
             runtime_state["registered"] = True
-            runtime_state["last_register_ok"] = _now()
+            runtime_state["last_register_ok"] = now_ts()
             runtime_state["last_register_error"] = None
-            print(f"[REGISTER] success: {result}")
-            await asyncio.sleep(max(HEARTBEAT_SECONDS, 10))
+
+            msg = f"ok device_id={DEVICE_ID}"
+            if msg != last_register_message:
+                quiet_print("[REGISTER]", msg)
+                last_register_message = msg
+
         except Exception as e:
             runtime_state["registered"] = False
             runtime_state["last_register_error"] = str(e)
-            print(f"[REGISTER] failed: {e}")
-            await asyncio.sleep(5)
+
+            msg = str(e)
+            if msg != last_register_message:
+                quiet_print("[REGISTER]", f"failed: {msg}")
+                last_register_message = msg
+
+        await asyncio.sleep(max(HEARTBEAT_SECONDS, 10))
 
 
 async def status_loop():
+    global last_status_message
+
     await asyncio.sleep(1.0)
 
     while True:
         try:
-            payload = collect_filometrics()
-            result = await asyncio.to_thread(send_status_to_cloud, payload)
-            runtime_state["last_status_ok"] = _now()
+            payload = collect_payload()
+            await asyncio.to_thread(send_status_to_cloud, payload)
+
+            runtime_state["last_status_ok"] = now_ts()
             runtime_state["last_status_error"] = None
-            print(f"[STATUS] sent: {result}")
+
+            cpu = payload.get("cpu_percent")
+            ram = payload.get("ram_percent")
+            batt = payload.get("battery_percent")
+            gpu = payload.get("gpu_percent")
+
+            msg = f"ok cpu={cpu} ram={ram} batt={batt} gpu={gpu}"
+            if msg != last_status_message:
+                quiet_print("[STATUS]", msg)
+                last_status_message = msg
+
         except Exception as e:
             runtime_state["last_status_error"] = str(e)
-            print(f"[STATUS] failed: {e}")
 
-        await asyncio.sleep(max(STATUS_SECONDS, 1))
+            msg = f"failed: {e}"
+            if msg != last_status_message:
+                quiet_print("[STATUS]", msg)
+                last_status_message = msg
+
+        await asyncio.sleep(max(STATUS_SECONDS, 1.0))
 
 
 async def command_loop():
+    global last_command_message
+
     while True:
         try:
             result = await asyncio.to_thread(get_next_command_from_cloud)
+
             command = {}
             if isinstance(result, dict):
                 command = result.get("command") or {}
@@ -381,8 +514,6 @@ async def command_loop():
                 cmd_id = command.get("id")
                 cmd = (command.get("command") or "").strip().lower()
                 payload = command.get("payload") or {}
-
-                print(f"[COMMAND] received: {cmd} payload={payload}")
 
                 if cmd in {"forward", "backward", "left", "right", "stop"}:
                     try:
@@ -393,8 +524,14 @@ async def command_loop():
                             "status": "completed",
                         }
                         await asyncio.to_thread(ack_command_to_cloud, ack_payload)
-                        runtime_state["last_command_ok"] = _now()
+                        runtime_state["last_command_ok"] = now_ts()
                         runtime_state["last_command_error"] = None
+
+                        msg = f"ok {cmd}"
+                        if msg != last_command_message:
+                            quiet_print("[COMMAND]", msg)
+                            last_command_message = msg
+
                     except Exception as e:
                         ack_payload = {
                             "command_id": cmd_id,
@@ -405,37 +542,38 @@ async def command_loop():
                         await asyncio.to_thread(ack_command_to_cloud, ack_payload)
                         runtime_state["last_command_error"] = str(e)
 
+                        msg = f"failed {cmd}: {e}"
+                        if msg != last_command_message:
+                            quiet_print("[COMMAND]", msg)
+                            last_command_message = msg
+
         except Exception as e:
             runtime_state["last_command_error"] = str(e)
-            print(f"[COMMAND] poll failed: {e}")
+            msg = f"poll failed: {e}"
+            if msg != last_command_message:
+                quiet_print("[COMMAND]", msg)
+                last_command_message = msg
 
-        await asyncio.sleep(max(POLL_SECONDS, 0.1))
+        await asyncio.sleep(max(POLL_SECONDS, 0.25))
 
 
-# -------------------------------------------------------------------
-# FASTAPI APP
-# -------------------------------------------------------------------
+# ------------------------------------------------------------------
+# FASTAPI
+# ------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("[STARTUP] connecting serial")
     try:
         serial_link.connect()
     except Exception as e:
-        print(f"[SERIAL] connect failed: {e}")
-
-    print("[STARTUP] initializing rag")
-    try:
-        rag_manager.initialize()
-    except Exception as e:
-        print(f"[RAG] init failed: {e}")
+        quiet_print("[SERIAL]", f"connect failed: {e}")
 
     asyncio.create_task(registration_loop())
     asyncio.create_task(status_loop())
     asyncio.create_task(command_loop())
 
-    print("[STARTUP] background loops started")
+    quiet_print("[STARTUP]", "filometrics agent running")
     yield
-    print("[SHUTDOWN] complete")
+    quiet_print("[SHUTDOWN]", "done")
 
 
 app = FastAPI(title="AURA Jetson Agent", lifespan=lifespan)
@@ -458,8 +596,14 @@ async def health():
 
 @app.get("/status")
 async def status():
-    return collect_filometrics()
+    return collect_payload()
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        access_log=False,
+        log_level="warning",
+    )
