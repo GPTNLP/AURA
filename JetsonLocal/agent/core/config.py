@@ -39,7 +39,12 @@ STATUS_SECONDS = int(os.getenv("DEVICE_STATUS_SECONDS", "1"))
 CONFIG_REFRESH_SECONDS = int(os.getenv("DEVICE_CONFIG_REFRESH_SECONDS", "120"))
 OFFLINE_RETRY_SECONDS = int(os.getenv("DEVICE_OFFLINE_RETRY_SECONDS", "10"))
 
-SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyUSB0")
+SERIAL_PORT = os.getenv("SERIAL_PORT", "/dev/ttyUSB0").strip()
+SERIAL_BAUDRATE = int(os.getenv("SERIAL_BAUDRATE", "115200"))
+SERIAL_TIMEOUT = float(os.getenv("SERIAL_TIMEOUT", "1"))
+SERIAL_ACK_TIMEOUT = float(os.getenv("SERIAL_ACK_TIMEOUT", "2.0"))
+SERIAL_DRY_RUN = os.getenv("SERIAL_DRY_RUN", "true").strip().lower() == "true"
+
 INPUT_MODE = os.getenv("INPUT_MODE", "keyboard").strip().lower()
 
 DEFAULT_MODEL = os.getenv("AURA_LLM_MODEL", "llama3.2")
