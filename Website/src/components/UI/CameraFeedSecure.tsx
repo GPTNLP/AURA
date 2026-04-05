@@ -24,13 +24,10 @@ export default function CameraFeedSecure() {
   const [err, setErr] = useState<string | null>(null);
   const [mode, setMode] = useState<CameraMode>("raw");
   const [busy, setBusy] = useState(false);
-  const [displaySrc, setDisplaySrc] = useState("");
+  const [streamNonce, setStreamNonce] = useState(0);
   const [statusText, setStatusText] = useState("Starting camera...");
-  const [metaTick, setMetaTick] = useState(0);
 
   const mountedRef = useRef(true);
-  const preloadRef = useRef<HTMLImageElement | null>(null);
-  const pollTimerRef = useRef<number | null>(null);
   const metaTimerRef = useRef<number | null>(null);
 
   const base = (API_BASE || "").replace(/\/+$/, "");
@@ -39,12 +36,12 @@ export default function CameraFeedSecure() {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
   });
 
-  const frameSrc = useMemo(() => {
+  const streamSrc = useMemo(() => {
     if (!base) return "";
-    return `${base}/camera/latest?device_id=${encodeURIComponent(
+    return `${base}/camera/stream?device_id=${encodeURIComponent(
       DEVICE_ID
-    )}&mode=${encodeURIComponent(mode)}&t=${Date.now()}`;
-  }, [base, mode, metaTick]);
+    )}&mode=${encodeURIComponent(mode)}&t=${streamNonce}`;
+  }, [base, mode, streamNonce]);
 
   const metaUrl = useMemo(() => {
     if (!base) return "";
@@ -76,17 +73,20 @@ export default function CameraFeedSecure() {
         throw new Error(data?.detail || `Activate failed (${res.status})`);
       }
 
+      if (!mountedRef.current) return;
+
       setMode(newMode);
       setOk(false);
       setErr(null);
-      setDisplaySrc("");
       setStatusText(newMode === "raw" ? "Raw mode active" : "Detection mode active");
-      setMetaTick((n) => n + 1);
+      setStreamNonce((n) => n + 1);
     } catch (e: any) {
+      if (!mountedRef.current) return;
       setErr(e?.message || "Failed to activate camera");
       setStatusText("Camera start failed");
       setOk(false);
     } finally {
+      if (!mountedRef.current) return;
       setBusy(false);
     }
   };
@@ -121,30 +121,6 @@ export default function CameraFeedSecure() {
     await activateCamera(newMode);
   };
 
-  const loadNextFrame = (src: string) => {
-    if (!src) return;
-
-    const img = new Image();
-    preloadRef.current = img;
-
-    img.onload = () => {
-      if (!mountedRef.current) return;
-      if (preloadRef.current !== img) return;
-      setDisplaySrc(src);
-      setOk(true);
-      setErr(null);
-    };
-
-    img.onerror = () => {
-      if (!mountedRef.current) return;
-      if (preloadRef.current !== img) return;
-      setOk(false);
-      setErr("Stream unavailable");
-    };
-
-    img.src = src;
-  };
-
   useEffect(() => {
     mountedRef.current = true;
 
@@ -171,7 +147,6 @@ export default function CameraFeedSecure() {
     return () => {
       mountedRef.current = false;
 
-      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
       if (metaTimerRef.current) window.clearInterval(metaTimerRef.current);
 
       window.removeEventListener("pagehide", onPageHide);
@@ -179,24 +154,6 @@ export default function CameraFeedSecure() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!base) return;
-
-    if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
-
-    pollTimerRef.current = window.setInterval(() => {
-      loadNextFrame(
-        `${base}/camera/latest?device_id=${encodeURIComponent(
-          DEVICE_ID
-        )}&mode=${encodeURIComponent(mode)}&t=${Date.now()}`
-      );
-    }, 120);
-
-    return () => {
-      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
-    };
-  }, [base, mode]);
 
   useEffect(() => {
     if (!base || !metaUrl) return;
@@ -232,9 +189,11 @@ export default function CameraFeedSecure() {
 
         if (typeof data.mode === "string" && data.mode !== mode) {
           setMode(data.mode);
+          setStreamNonce((n) => n + 1);
         }
 
-        setMetaTick((n) => n + 1);
+        setOk(isFresh && !!data.available);
+        setErr(null);
       } catch {
         if (!mountedRef.current) return;
         setOk(false);
@@ -249,12 +208,6 @@ export default function CameraFeedSecure() {
       if (metaTimerRef.current) window.clearInterval(metaTimerRef.current);
     };
   }, [base, metaUrl, mode, token]);
-
-  useEffect(() => {
-    if (frameSrc) {
-      loadNextFrame(frameSrc);
-    }
-  }, [frameSrc]);
 
   if (!API_BASE) {
     return (
@@ -297,11 +250,7 @@ export default function CameraFeedSecure() {
           </button>
 
           <button
-            onClick={() => loadNextFrame(
-              `${base}/camera/latest?device_id=${encodeURIComponent(
-                DEVICE_ID
-              )}&mode=${encodeURIComponent(mode)}&t=${Date.now()}`
-            )}
+            onClick={() => setStreamNonce((n) => n + 1)}
             disabled={busy}
             className="cam-btn"
           >
@@ -311,12 +260,23 @@ export default function CameraFeedSecure() {
       </div>
 
       <div className="cam-frame">
-        {displaySrc ? (
+        {streamSrc ? (
           <img
+            key={`${mode}-${streamNonce}`}
             className="cam-img"
-            src={displaySrc}
+            src={streamSrc}
             alt="Camera feed"
             draggable={false}
+            onLoad={() => {
+              if (!mountedRef.current) return;
+              setOk(true);
+              setErr(null);
+            }}
+            onError={() => {
+              if (!mountedRef.current) return;
+              setOk(false);
+              setErr("Stream unavailable");
+            }}
           />
         ) : (
           <div className="cam-placeholder">
