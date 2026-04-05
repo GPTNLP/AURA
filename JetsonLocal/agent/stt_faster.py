@@ -1,6 +1,7 @@
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+import gc
 import re
 import time
 import asyncio
@@ -15,30 +16,26 @@ from faster_whisper import WhisperModel
 # ============================================================
 # TUNING
 # ============================================================
-WAKE_AUDIO_THRESHOLD = 0.030
-COMMAND_AUDIO_THRESHOLD = 0.018
+WAKE_AUDIO_THRESHOLD = 0.035
+COMMAND_AUDIO_THRESHOLD = 0.020
 END_SILENCE_SECONDS = 1.0
 WAKE_CHUNK_SECONDS = 1.8
 COMMAND_CHUNK_SECONDS = 0.30
 COMMAND_TIMEOUT_SECONDS = 8.0
-NEAR_FIELD_BOOST = 1.15
-USE_ONLY_LEFT_CHANNEL = False
+NEAR_FIELD_BOOST = 1.0
+USE_ONLY_LEFT_CHANNEL = True
 WAKE_MATCH_MODE = 1
 
-# noise handling
+# unload whisper if we have not needed it for this long
+MODEL_IDLE_UNLOAD_SECONDS = 60.0
+
+# optional cooldown so wake word does not instantly retrigger
+WAKE_COOLDOWN_SECONDS = 1.0
+
+# simple dynamic noise handling
 NOISE_FLOOR_SAMPLES = 5
 NOISE_FLOOR_MULTIPLIER = 2.2
 MIN_DYNAMIC_THRESHOLD = 0.012
-
-# model / decoding
-DEFAULT_MODEL_SIZE = "tiny.en"
-DEFAULT_DEVICE = "cpu"
-DEFAULT_COMPUTE_TYPE = "int8"
-DEFAULT_LANGUAGE = "en"
-DEFAULT_TASK = "transcribe"
-
-# wake cooldown so it does not retrigger instantly
-WAKE_COOLDOWN_SECONDS = 1.0
 
 
 # ============================================================
@@ -144,10 +141,6 @@ def contains_bad_language(text: str) -> bool:
 
 
 def wake_score(text: str) -> Tuple[bool, str, str]:
-    """
-    Returns:
-      (matched: bool, cleaned_text_after_wake: str, debug_reason: str)
-    """
     norm = normalize_text(text)
     if not norm:
         return False, "", "empty"
@@ -200,13 +193,6 @@ def wake_score(text: str) -> Tuple[bool, str, str]:
         return True, cleaned, "fallback_prefix+auraish"
 
     return False, "", "no_match"
-
-
-def remove_wake_phrase(text: str) -> str:
-    matched, leftover, _ = wake_score(text)
-    if matched:
-        return leftover
-    return normalize_text(text)
 
 
 def detect_last_movement_command(text: str) -> Optional[str]:
@@ -265,15 +251,15 @@ class STTService:
     def __init__(
         self,
         callback: Callable[[str, str, Optional[str]], Awaitable[None]],
-        model_size: str = DEFAULT_MODEL_SIZE,
+        model_size: str = "tiny.en",
         input_device: Optional[int] = None,
         device_sample_rate: Optional[int] = None,
         target_sample_rate: int = 16000,
         channels: Optional[int] = None,
-        device: str = DEFAULT_DEVICE,
-        compute_type: str = DEFAULT_COMPUTE_TYPE,
-        language: str = DEFAULT_LANGUAGE,
-        task: str = DEFAULT_TASK,
+        device: str = "cpu",
+        compute_type: str = "int8",
+        language: str = "en",
+        task: str = "transcribe",
         log_path: str = "~/SDP/AURA/JetsonLocal/storage/transcriptions.log",
     ):
         self.callback = callback
@@ -292,6 +278,8 @@ class STTService:
         self.is_running = False
         self.noise_floor = 0.0
         self.last_wake_time = 0.0
+        self.last_model_activity_at = 0.0
+        self.last_sound_activity_at = 0.0
 
         self._resolve_input_device()
 
@@ -353,8 +341,28 @@ class STTService:
         print(f"[STT] Device sample rate: {self.device_sample_rate}")
         print(f"[STT] Channels: {self.channels}")
 
+    # --------------------------------------------------------
+    # MODEL LIFECYCLE
+    # --------------------------------------------------------
+    @property
+    def model_loaded(self) -> bool:
+        return self.model is not None
+
+    @property
+    def model_idle_seconds(self) -> Optional[float]:
+        if not self.last_model_activity_at:
+            return None
+        return max(0.0, time.time() - self.last_model_activity_at)
+
+    def _touch_model_activity(self) -> None:
+        self.last_model_activity_at = time.time()
+
+    def _touch_sound_activity(self) -> None:
+        self.last_sound_activity_at = time.time()
+
     def _ensure_model_loaded(self) -> None:
         if self.model is not None:
+            self._touch_model_activity()
             return
 
         print(f"[STT] Loading faster-whisper model '{self.model_size}'...")
@@ -364,7 +372,28 @@ class STTService:
             compute_type=self.compute_type,
             cpu_threads=4,
         )
+        self._touch_model_activity()
         print("[STT] Model loaded successfully!")
+
+    def unload_model(self) -> None:
+        if self.model is None:
+            return
+
+        print("[STT] Unloading faster-whisper model due to inactivity...")
+        self.model = None
+        gc.collect()
+        print("[STT] Model unloaded.")
+
+    def unload_model_if_idle(self) -> None:
+        if self.model is None:
+            return
+
+        idle_seconds = self.model_idle_seconds
+        if idle_seconds is None:
+            return
+
+        if idle_seconds >= MODEL_IDLE_UNLOAD_SECONDS:
+            self.unload_model()
 
     # --------------------------------------------------------
     # AUDIO HELPERS
@@ -411,12 +440,13 @@ class STTService:
         return peak, mean
 
     def _dynamic_threshold(self, base_threshold: float) -> float:
-        dynamic = max(
-            base_threshold,
-            MIN_DYNAMIC_THRESHOLD,
-            self.noise_floor * NOISE_FLOOR_MULTIPLIER,
+        return float(
+            max(
+                base_threshold,
+                MIN_DYNAMIC_THRESHOLD,
+                self.noise_floor * NOISE_FLOOR_MULTIPLIER,
+            )
         )
-        return float(dynamic)
 
     def calibrate_noise_floor(self) -> None:
         print("[STT] Calibrating noise floor...")
@@ -454,6 +484,8 @@ class STTService:
             condition_on_previous_text=False,
         )
 
+        self._touch_model_activity()
+
         text = " ".join(seg.text.strip() for seg in segments).strip()
         return text
 
@@ -465,8 +497,11 @@ class STTService:
         peak, mean = self.analyze_level(audio)
 
         threshold = self._dynamic_threshold(WAKE_AUDIO_THRESHOLD)
+
         if peak < threshold:
             return False, "", "", f"too_quiet peak={peak:.4f} threshold={threshold:.4f}"
+
+        self._touch_sound_activity()
 
         text = self._transcribe_audio_array(audio)
         if not text:
@@ -500,6 +535,7 @@ class STTService:
             if peak >= threshold:
                 speech_started = True
                 silence_after_speech = 0.0
+                self._touch_sound_activity()
             else:
                 if speech_started:
                     silence_after_speech += chunk_seconds
@@ -535,10 +571,9 @@ class STTService:
     # MAIN LOOP
     # --------------------------------------------------------
     async def continuous_stt_loop(self) -> None:
-        self._ensure_model_loaded()
         self.calibrate_noise_floor()
-
         print("[STT] Voice loop active. Say 'Hey AURA' to activate.")
+        print(f"[STT] Whisper unload timeout: {MODEL_IDLE_UNLOAD_SECONDS:.0f}s")
 
         self.is_running = True
 
@@ -547,6 +582,8 @@ class STTService:
                 woke, wake_text, leftover, reason = await asyncio.to_thread(
                     self.listen_for_wake_word
                 )
+
+                self.unload_model_if_idle()
 
                 if not woke:
                     await asyncio.sleep(0.05)
@@ -567,9 +604,11 @@ class STTService:
                     final_text = await asyncio.to_thread(self.listen_until_done)
 
                 final_text = normalize_text(final_text)
+
                 if not final_text:
                     print("[AURA] No speech heard. Returning to wake mode.")
                     print("-" * 60)
+                    self.unload_model_if_idle()
                     await asyncio.sleep(0.05)
                     continue
 
@@ -593,12 +632,15 @@ class STTService:
 
                 print("[AURA] Returning to wake mode.")
                 print("-" * 60)
+
+                self.unload_model_if_idle()
                 await asyncio.sleep(0.05)
 
             except Exception as e:
                 print(f"[STT] Loop error: {e}")
                 await asyncio.sleep(0.5)
 
+        self.unload_model()
         print("[STT] Voice loop stopped.")
 
     def stop(self) -> None:

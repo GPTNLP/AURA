@@ -153,6 +153,8 @@ def build_stt_service() -> STTService:
         language="en",
         task="transcribe",
         log_path="~/SDP/AURA/JetsonLocal/storage/transcriptions.log",
+        unload_after_idle_seconds=60.0,
+        auto_reload_model=True,
     )
 
 
@@ -175,7 +177,7 @@ async def stop_voice_loop() -> None:
 
     if stt_task is not None:
         try:
-            await asyncio.wait_for(stt_task, timeout=2.0)
+            await asyncio.wait_for(stt_task, timeout=3.0)
         except Exception:
             stt_task.cancel()
             try:
@@ -229,9 +231,15 @@ async def refresh_config():
 
     try:
         result = await asyncio.to_thread(api.get_config, DEVICE_ID)
-        runtime_config["poll_seconds"] = float(result.get("poll_seconds", runtime_config["poll_seconds"]))
-        runtime_config["heartbeat_seconds"] = int(result.get("heartbeat_seconds", runtime_config["heartbeat_seconds"]))
-        runtime_config["status_seconds"] = 1
+        runtime_config["poll_seconds"] = float(
+            result.get("poll_seconds", runtime_config["poll_seconds"])
+        )
+        runtime_config["heartbeat_seconds"] = int(
+            result.get("heartbeat_seconds", runtime_config["heartbeat_seconds"])
+        )
+        runtime_config["status_seconds"] = int(
+            result.get("status_seconds", runtime_config["status_seconds"])
+        )
     except Exception as e:
         send_or_queue_log("warning", "config_refresh_failed", f"Failed to refresh config: {e}")
         quiet_print("config", f"[CONFIG] using local defaults ({e})")
@@ -406,6 +414,56 @@ async def command_loop():
                         )
                         quiet_print("camera_cmd", f"[COMMAND] camera off failed: {e}")
 
+                elif cmd == "voice_start":
+                    try:
+                        await start_voice_loop()
+                        await asyncio.to_thread(
+                            api.ack_command,
+                            {
+                                "command_id": command_id,
+                                "device_id": DEVICE_ID,
+                                "status": "completed",
+                                "note": "Voice loop started",
+                            },
+                        )
+                        quiet_print("voice_cmd", "[COMMAND] voice start")
+                    except Exception as e:
+                        await asyncio.to_thread(
+                            api.ack_command,
+                            {
+                                "command_id": command_id,
+                                "device_id": DEVICE_ID,
+                                "status": "failed",
+                                "note": f"Voice start failed: {e}",
+                            },
+                        )
+                        quiet_print("voice_cmd", f"[COMMAND] voice start failed: {e}")
+
+                elif cmd == "voice_stop":
+                    try:
+                        await stop_voice_loop()
+                        await asyncio.to_thread(
+                            api.ack_command,
+                            {
+                                "command_id": command_id,
+                                "device_id": DEVICE_ID,
+                                "status": "completed",
+                                "note": "Voice loop stopped",
+                            },
+                        )
+                        quiet_print("voice_cmd", "[COMMAND] voice stop")
+                    except Exception as e:
+                        await asyncio.to_thread(
+                            api.ack_command,
+                            {
+                                "command_id": command_id,
+                                "device_id": DEVICE_ID,
+                                "status": "failed",
+                                "note": f"Voice stop failed: {e}",
+                            },
+                        )
+                        quiet_print("voice_cmd", f"[COMMAND] voice stop failed: {e}")
+
                 else:
                     await asyncio.to_thread(
                         api.ack_command,
@@ -557,6 +615,16 @@ app.router.lifespan_context = lifespan
 # -------------------------------------------------------------------
 @app.get("/health")
 async def health():
+    voice_running = bool(stt_task and not stt_task.done())
+    voice_loaded = bool(getattr(stt_service, "model", None)) if stt_service else False
+    voice_idle_seconds = None
+
+    if stt_service and hasattr(stt_service, "last_audio_activity_ts"):
+        try:
+            voice_idle_seconds = max(0.0, time.time() - float(stt_service.last_audio_activity_ts))
+        except Exception:
+            voice_idle_seconds = None
+
     return {
         "ok": True,
         "device_id": DEVICE_ID,
@@ -566,11 +634,14 @@ async def health():
         "camera": camera_service.get_status(),
         "voice": {
             "enabled": voice_enabled,
-            "running": bool(stt_task and not stt_task.done()),
+            "running": voice_running,
+            "model_loaded": voice_loaded,
             "device_index": stt_service.input_device if stt_service else None,
             "device_sample_rate": stt_service.device_sample_rate if stt_service else None,
             "channels": stt_service.channels if stt_service else None,
             "noise_floor": stt_service.noise_floor if stt_service else None,
+            "idle_seconds": voice_idle_seconds,
+            "unload_after_idle_seconds": getattr(stt_service, "unload_after_idle_seconds", None) if stt_service else None,
         },
     }
 
@@ -582,15 +653,28 @@ async def status():
 
 @app.get("/voice/status")
 async def voice_status():
+    voice_running = bool(stt_task and not stt_task.done())
+    voice_loaded = bool(getattr(stt_service, "model", None)) if stt_service else False
+    voice_idle_seconds = None
+
+    if stt_service and hasattr(stt_service, "last_audio_activity_ts"):
+        try:
+            voice_idle_seconds = max(0.0, time.time() - float(stt_service.last_audio_activity_ts))
+        except Exception:
+            voice_idle_seconds = None
+
     return {
         "ok": True,
         "enabled": voice_enabled,
-        "running": bool(stt_task and not stt_task.done()),
+        "running": voice_running,
+        "model_loaded": voice_loaded,
         "device_index": stt_service.input_device if stt_service else None,
         "device_sample_rate": stt_service.device_sample_rate if stt_service else None,
         "channels": stt_service.channels if stt_service else None,
         "noise_floor": stt_service.noise_floor if stt_service else None,
         "model_size": stt_service.model_size if stt_service else None,
+        "idle_seconds": voice_idle_seconds,
+        "unload_after_idle_seconds": getattr(stt_service, "unload_after_idle_seconds", None) if stt_service else None,
     }
 
 
@@ -600,6 +684,7 @@ async def voice_start():
     return {
         "ok": True,
         "running": bool(stt_task and not stt_task.done()),
+        "model_loaded": bool(getattr(stt_service, "model", None)) if stt_service else False,
     }
 
 
@@ -609,6 +694,7 @@ async def voice_stop():
     return {
         "ok": True,
         "running": False,
+        "model_loaded": False,
     }
 
 
